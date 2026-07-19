@@ -1,0 +1,643 @@
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+
+/* ============================================================
+   BillDNA ERP — Phases 1–5 (integrated)
+   P1 Core: Auth, Companies, Branches, Roles, Dashboard, Alerts, Logs, Backup
+   P2 Masters: Customers, Suppliers, Products (Category/Brand/Unit/HSN/GST/Barcode), Warehouses
+   P3 Billing: GST/Retail Invoice, Estimate, Quotation, POS, Print, WhatsApp share, Sales Return
+   P4 Purchase: Purchase Invoice, Supplier Payments, Pending Purchases
+   P5 Inventory: Auto stock in/out, Adjustment, Warehouse Transfer, Low-stock alerts
+   Storage: window.storage key "billdna_erp_v2" (migrates from v1)
+   ============================================================ */
+
+const T = { bg:"#0E1420", panel:"#161E2E", panel2:"#1C2638", line:"#26324A", text:"#E8EDF6", dim:"#8A97AD", acc:"#2FB7A4", acc2:"#F5B841", danger:"#E5604C", ok:"#4CC97A" };
+const PERMS = ["billing","purchase","inventory","accounting","reports","masters","settings","users"];
+const ROLE_PRESETS = { Owner:PERMS, Manager:["billing","purchase","inventory","reports","masters"], Cashier:["billing"], Accountant:["accounting","reports"] };
+const GST_RATES = [0,5,12,18,28];
+const INV_TYPES = ["GST Invoice","Retail Invoice","Estimate","Quotation","Proforma"];
+const KEY="billdna_erp_v2", OLD_KEY="billdna_core_v1";
+const uid=()=>Math.random().toString(36).slice(2,9);
+const fmtTs=t=>new Date(t).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+const inr=n=>"₹"+(+n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
+
+const seed=()=>({
+  users:[{id:"u1",name:"Admin",email:"admin@billdna.in",pin:"1234",role:"Owner",active:true}],
+  companies:[],activeCompanyId:null,activeBranchId:null,
+  customers:[],suppliers:[],products:[],warehouses:[],
+  invoices:[],purchases:[],payments:[],stockMoves:[],
+  seq:{inv:0,pur:0},
+  notifications:[{id:"n1",msg:"Welcome to BillDNA ERP (Phases 1–5).",ts:Date.now(),read:false}],
+  logs:[{id:"l1",ts:Date.now(),user:"System",action:"System initialized"}],
+});
+
+export default function BillDNA(){
+  const [db,setDb]=useState(null);
+  const [session,setSession]=useState(null);
+  const [view,setView]=useState("dashboard");
+  const [toast,setToast]=useState(null);
+
+  useEffect(()=>{(async()=>{
+    try{
+      const r=await window.storage.get(KEY);
+      if(r){setDb(JSON.parse(r.value));return;}
+    }catch{}
+    // migrate from Phase-1 store if present
+    try{
+      const o=await window.storage.get(OLD_KEY);
+      if(o){const old=JSON.parse(o.value);setDb({...seed(),...old,seq:{inv:0,pur:0},customers:[],suppliers:[],products:[],warehouses:[],invoices:[],purchases:[],payments:[],stockMoves:[]});return;}
+    }catch{}
+    setDb(seed());
+  })();},[]);
+
+  const save=useCallback(async next=>{setDb(next);try{await window.storage.set(KEY,JSON.stringify(next));}catch(e){console.error(e);}},[]);
+  const log=(d,action)=>{d.logs=[{id:uid(),ts:Date.now(),user:session?.name||"System",action},...d.logs].slice(0,300);};
+  const notify=(d,msg)=>{d.notifications=[{id:uid(),msg,ts:Date.now(),read:false},...d.notifications].slice(0,150);};
+  const flash=m=>{setToast(m);setTimeout(()=>setToast(null),2200);};
+
+  if(!db) return <div style={{background:T.bg,minHeight:"100vh",color:T.dim,display:"grid",placeItems:"center",fontFamily:"system-ui"}}>Loading BillDNA…</div>;
+  if(!session) return <Login db={db} onLogin={u=>{const d=structuredClone(db);log(d,`${u.name} logged in`);save(d);setSession(u);}}/>;
+
+  const company=db.companies.find(c=>c.id===db.activeCompanyId);
+  const branch=company?.branches.find(b=>b.id===db.activeBranchId);
+  const unread=db.notifications.filter(n=>!n.read).length;
+  const can=p=>session.role==="Owner"||(ROLE_PRESETS[session.role]||[]).includes(p);
+  const lowStock=db.products.filter(p=>totalStock(p)<=(p.low??0)&&p.low>0);
+
+  const NAV=[
+    ["dashboard","📊 Dashboard",true],
+    ["pos","🧾 POS Billing",can("billing")],
+    ["invoices","📄 Invoices",can("billing")],
+    ["purchase","📦 Purchase",can("purchase")],
+    ["inventory","🏬 Inventory",can("inventory")],
+    ["products","🛒 Products",can("masters")],
+    ["customers","👥 Customers",can("masters")],
+    ["suppliers","🚚 Suppliers",can("masters")],
+    ["companies","🏢 Companies",can("settings")],
+    ["users","🔐 Users & Roles",can("users")],
+    ["notifications",`🔔 Alerts${unread?` (${unread})`:""}`,true],
+    ["logs","📜 Activity Log",can("settings")],
+    ["backup","💾 Backup",can("settings")],
+  ];
+
+  const ctx={db,save,log,notify,flash,session,company,branch,can};
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",color:T.text,fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",borderBottom:`1px solid ${T.line}`,background:T.panel}}>
+        <div style={{fontWeight:800,letterSpacing:1,fontSize:18}}>Bill<span style={{color:T.acc}}>DNA</span></div>
+        <div style={{fontSize:12,color:T.dim,flex:1}}>{company?`${company.name}${branch?` · ${branch.name}`:""}`:"No company selected"}</div>
+        {lowStock.length>0&&<div style={{fontSize:11,color:T.acc2}}>⚠ {lowStock.length} low stock</div>}
+        <div style={{fontSize:12,color:T.dim}}>{session.name} · {session.role}</div>
+        <button onClick={()=>setSession(null)} style={btn(T.panel2)}>Logout</button>
+      </div>
+      <div style={{display:"flex",flex:1,minHeight:0}}>
+        <div style={{width:190,borderRight:`1px solid ${T.line}`,padding:10,display:"flex",flexDirection:"column",gap:3,background:T.panel,overflowY:"auto"}}>
+          {NAV.filter(n=>n[2]).map(([k,label])=>(
+            <button key={k} onClick={()=>setView(k)} style={{...btn(view===k?T.acc:"transparent"),color:view===k?"#08221E":T.text,textAlign:"left",fontWeight:view===k?700:400,fontSize:12.5}}>{label}</button>
+          ))}
+          <div style={{marginTop:"auto",fontSize:10,color:T.dim,padding:6}}>Phases 1–5 · v2.0</div>
+        </div>
+        <div style={{flex:1,overflow:"auto",padding:18}}>
+          {view==="dashboard"&&<Dashboard {...ctx} lowStock={lowStock}/>}
+          {view==="pos"&&<POS {...ctx}/>}
+          {view==="invoices"&&<Invoices {...ctx}/>}
+          {view==="purchase"&&<Purchase {...ctx}/>}
+          {view==="inventory"&&<Inventory {...ctx}/>}
+          {view==="products"&&<Products {...ctx}/>}
+          {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
+          {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
+          {view==="companies"&&<Companies {...ctx}/>}
+          {view==="users"&&<Users {...ctx}/>}
+          {view==="notifications"&&<Notifications {...ctx}/>}
+          {view==="logs"&&<Logs db={db}/>}
+          {view==="backup"&&<Backup {...ctx}/>}
+        </div>
+      </div>
+      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:T.acc,color:"#08221E",padding:"8px 18px",borderRadius:8,fontWeight:700,fontSize:13,zIndex:99}}>{toast}</div>}
+    </div>
+  );
+}
+
+const totalStock=p=>Object.values(p.stock||{}).reduce((a,b)=>a+b,0);
+
+/* ---------- Login ---------- */
+function Login({db,onLogin}){
+  const [email,setEmail]=useState("admin@billdna.in");const [pin,setPin]=useState("");const [err,setErr]=useState("");
+  const go=()=>{const u=db.users.find(x=>x.email.toLowerCase()===email.trim().toLowerCase()&&x.pin===pin&&x.active);
+    if(u)onLogin(u);else setErr("Email or PIN incorrect. Default: admin@billdna.in / 1234");};
+  return(<div style={{background:T.bg,minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"system-ui"}}>
+    <div style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:28,width:320}}>
+      <div style={{fontWeight:800,fontSize:26,color:T.text,marginBottom:4}}>Bill<span style={{color:T.acc}}>DNA</span></div>
+      <div style={{color:T.dim,fontSize:12,marginBottom:18}}>SME ERP · Phases 1–5</div>
+      <input style={inp()} placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/>
+      <input style={inp()} placeholder="PIN" type="password" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
+      {err&&<div style={{color:T.danger,fontSize:12,marginBottom:8}}>{err}</div>}
+      <button onClick={go} style={{...btn(T.acc),width:"100%",color:"#08221E",fontWeight:800,padding:10}}>Sign in</button>
+    </div></div>);
+}
+
+/* ---------- Dashboard ---------- */
+function Dashboard({db,company,branch,lowStock}){
+  const today=new Date().toDateString();
+  const todaySales=db.invoices.filter(i=>new Date(i.ts).toDateString()===today&&i.type.includes("Invoice"));
+  const outstanding=db.invoices.reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
+  const purDue=db.purchases.reduce((a,p)=>a+Math.max(0,p.total-p.paid),0);
+  const stats=[
+    ["Today's Sales",inr(todaySales.reduce((a,i)=>a+i.total,0))],
+    ["Today's Bills",todaySales.length],
+    ["Receivables",inr(outstanding)],
+    ["Payables",inr(purDue)],
+    ["Products",db.products.length],
+    ["Customers",db.customers.length],
+  ];
+  return(<div>
+    <H1>Dashboard</H1>
+    {!company&&<Card><div style={{color:T.acc2}}>⚠ Setup pending — create your first company in Companies.</div></Card>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,margin:"14px 0"}}>
+      {stats.map(([l,v])=><Card key={l}><div style={{fontSize:22,fontWeight:800,color:T.acc}}>{v}</div><div style={{color:T.dim,fontSize:12}}>{l}</div></Card>)}
+    </div>
+    {lowStock.length>0&&<Card><div style={{fontWeight:700,color:T.acc2,marginBottom:6}}>⚠ Low stock</div>
+      {lowStock.slice(0,8).map(p=><div key={p.id} style={{fontSize:12,color:T.dim,padding:"2px 0"}}>{p.name} — {totalStock(p)} left (min {p.low})</div>)}</Card>}
+    <Card><div style={{fontWeight:700,marginBottom:8}}>Recent activity</div>
+      {db.logs.slice(0,6).map(l=><div key={l.id} style={{fontSize:12,color:T.dim,padding:"4px 0",borderBottom:`1px solid ${T.line}`}}>
+        <span style={{color:T.acc}}>{fmtTs(l.ts)}</span> · {l.user} — {l.action}</div>)}</Card>
+  </div>);
+}
+
+/* ---------- Products (P2 Masters) ---------- */
+function Products({db,save,log,flash}){
+  const empty={name:"",sku:"",barcode:"",category:"",brand:"",unit:"pcs",hsn:"",gst:18,price:"",cost:"",low:5};
+  const [f,setF]=useState(empty);const [q,setQ]=useState("");
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+  const add=()=>{
+    if(!f.name.trim()||!f.price)return flash("Name & selling price required");
+    const d=structuredClone(db);
+    d.products.push({id:uid(),...f,name:f.name.trim(),price:+f.price,cost:+f.cost||0,gst:+f.gst,low:+f.low||0,
+      barcode:f.barcode.trim()||("BD"+Date.now().toString().slice(-8)),stock:{}});
+    log(d,`Product added: ${f.name}`);save(d);setF(empty);flash("Product saved");
+  };
+  const del=id=>{const d=structuredClone(db);const p=d.products.find(x=>x.id===id);
+    d.products=d.products.filter(x=>x.id!==id);log(d,`Product deleted: ${p.name}`);save(d);};
+  const list=db.products.filter(p=>!q||p.name.toLowerCase().includes(q.toLowerCase())||p.barcode.includes(q)||p.sku.toLowerCase().includes(q.toLowerCase()));
+  return(<div>
+    <H1>Products</H1>
+    <Card>
+      <div style={{fontWeight:700,marginBottom:8}}>Add product</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8}}>
+        <input style={inp(0)} placeholder="Name *" value={f.name} onChange={e=>set("name",e.target.value)}/>
+        <input style={inp(0)} placeholder="SKU" value={f.sku} onChange={e=>set("sku",e.target.value)}/>
+        <input style={inp(0)} placeholder="Barcode (auto if blank)" value={f.barcode} onChange={e=>set("barcode",e.target.value)}/>
+        <input style={inp(0)} placeholder="Category" value={f.category} onChange={e=>set("category",e.target.value)}/>
+        <input style={inp(0)} placeholder="Brand" value={f.brand} onChange={e=>set("brand",e.target.value)}/>
+        <select style={inp(0)} value={f.unit} onChange={e=>set("unit",e.target.value)}>
+          {["pcs","kg","g","ltr","ml","box","dozen","mtr","ft","set"].map(u=><option key={u}>{u}</option>)}
+        </select>
+        <input style={inp(0)} placeholder="HSN/SAC" value={f.hsn} onChange={e=>set("hsn",e.target.value)}/>
+        <select style={inp(0)} value={f.gst} onChange={e=>set("gst",e.target.value)}>
+          {GST_RATES.map(r=><option key={r} value={r}>GST {r}%</option>)}
+        </select>
+        <input style={inp(0)} placeholder="Selling ₹ *" type="number" value={f.price} onChange={e=>set("price",e.target.value)}/>
+        <input style={inp(0)} placeholder="Cost ₹" type="number" value={f.cost} onChange={e=>set("cost",e.target.value)}/>
+        <input style={inp(0)} placeholder="Low-stock alert qty" type="number" value={f.low} onChange={e=>set("low",e.target.value)}/>
+      </div>
+      <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Save product</button>
+    </Card>
+    <input style={inp()} placeholder="🔍 Search name / barcode / SKU" value={q} onChange={e=>setQ(e.target.value)}/>
+    {list.map(p=>(
+      <Card key={p.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:180}}>
+          <b>{p.name}</b> <span style={{color:T.dim,fontSize:12}}>· {p.category||"—"} · {p.brand||"—"}</span>
+          <div style={{fontSize:11,color:T.dim}}>HSN {p.hsn||"—"} · GST {p.gst}% · ▮▮ {p.barcode}</div>
+        </div>
+        <div style={{fontSize:13}}><b style={{color:T.acc}}>{inr(p.price)}</b>/{p.unit}</div>
+        <div style={{fontSize:12,color:totalStock(p)<=p.low?T.acc2:T.ok}}>Stock: {totalStock(p)}</div>
+        <button onClick={()=>del(p.id)} style={{...btn(T.panel2),color:T.danger}}>✕</button>
+      </div></Card>))}
+    {list.length===0&&<div style={{color:T.dim,fontSize:13}}>No products yet. Add your first product above.</div>}
+  </div>);
+}
+
+/* ---------- Customers / Suppliers (P2) ---------- */
+function Parties({db,save,log,flash,kind,title}){
+  const [f,setF]=useState({name:"",phone:"",gstin:"",city:""});
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+  const add=()=>{
+    if(!f.name.trim())return flash("Name required");
+    const d=structuredClone(db);
+    d[kind].push({id:uid(),...f,name:f.name.trim(),ts:Date.now()});
+    log(d,`${title.slice(0,-1)} added: ${f.name}`);save(d);setF({name:"",phone:"",gstin:"",city:""});flash("Saved");
+  };
+  const bal=id=>kind==="customers"
+    ? db.invoices.filter(i=>i.customerId===id).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0)
+    : db.purchases.filter(p=>p.supplierId===id).reduce((a,p)=>a+Math.max(0,p.total-p.paid),0);
+  return(<div>
+    <H1>{title}</H1>
+    <Card><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8}}>
+      <input style={inp(0)} placeholder="Name *" value={f.name} onChange={e=>set("name",e.target.value)}/>
+      <input style={inp(0)} placeholder="Phone" value={f.phone} onChange={e=>set("phone",e.target.value)}/>
+      <input style={inp(0)} placeholder="GSTIN" value={f.gstin} onChange={e=>set("gstin",e.target.value)}/>
+      <input style={inp(0)} placeholder="City" value={f.city} onChange={e=>set("city",e.target.value)}/>
+    </div>
+    <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add</button></Card>
+    {db[kind].map(c=>(
+      <Card key={c.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}><b>{c.name}</b> <span style={{color:T.dim,fontSize:12}}>· {c.phone||"—"} · {c.city||"—"}</span>
+          {c.gstin&&<div style={{fontSize:11,color:T.dim}}>GSTIN: {c.gstin}</div>}</div>
+        <div style={{fontSize:12,color:bal(c.id)>0?T.acc2:T.ok}}>{kind==="customers"?"Due":"Payable"}: {inr(bal(c.id))}</div>
+      </div></Card>))}
+  </div>);
+}
+
+/* ---------- POS Billing (P3) ---------- */
+function POS({db,save,log,notify,flash,branch}){
+  const [cart,setCart]=useState([]);const [q,setQ]=useState("");
+  const [custId,setCustId]=useState("");const [type,setType]=useState("GST Invoice");
+  const [payMode,setPayMode]=useState("Cash");const [paidAmt,setPaidAmt]=useState("");
+  const [lastInv,setLastInv]=useState(null);
+
+  const matches=q?db.products.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.barcode===q||p.sku.toLowerCase()===q.toLowerCase()).slice(0,6):[];
+  const addItem=p=>{setCart(c=>{const ex=c.find(i=>i.pid===p.id);
+    return ex?c.map(i=>i.pid===p.id?{...i,qty:i.qty+1}:i):[...c,{pid:p.id,name:p.name,rate:p.price,gst:p.gst,unit:p.unit,qty:1,hsn:p.hsn}];});setQ("");};
+  const setQty=(pid,qty)=>setCart(c=>qty<=0?c.filter(i=>i.pid!==pid):c.map(i=>i.pid===pid?{...i,qty}:i));
+  const setRate=(pid,rate)=>setCart(c=>c.map(i=>i.pid===pid?{...i,rate:+rate||0}:i));
+
+  const sub=cart.reduce((a,i)=>a+i.rate*i.qty,0);
+  const taxable=type==="GST Invoice"||type==="Retail Invoice";
+  const tax=taxable?cart.reduce((a,i)=>a+i.rate*i.qty*i.gst/100,0):0;
+  const total=Math.round((sub+tax)*100)/100;
+
+  const finalize=()=>{
+    if(cart.length===0)return flash("Cart empty");
+    const d=structuredClone(db);
+    d.seq.inv++;
+    const no=`${type.split(" ")[0].slice(0,3).toUpperCase()}-${String(d.seq.inv).padStart(4,"0")}`;
+    const paid=paidAmt===""?total:Math.min(+paidAmt,total);
+    const inv={id:uid(),no,type,customerId:custId||null,items:cart,sub,tax,total,paid,payMode,ts:Date.now(),branchId:branch?.id||null,returned:false};
+    d.invoices.unshift(inv);
+    if(taxable){ // stock out
+      cart.forEach(i=>{const p=d.products.find(x=>x.id===i.pid);if(!p)return;
+        const wh=Object.keys(p.stock)[0]||"default";
+        p.stock[wh]=(p.stock[wh]||0)-i.qty;
+        d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:i.pid,wh,qty:-i.qty,type:"Sale",ref:no});
+        if(totalStock(p)<=p.low&&p.low>0)notify(d,`Low stock: ${p.name} (${totalStock(p)} left)`);
+      });
+    }
+    log(d,`${type} ${no} — ${inr(total)} (${payMode})`);
+    save(d);setCart([]);setCustId("");setPaidAmt("");setLastInv(inv);flash(`${no} saved`);
+  };
+
+  const cust=db.customers.find(c=>c.id===lastInv?.customerId);
+  const waLink=lastInv&&cust?.phone?`https://wa.me/91${cust.phone.replace(/\D/g,"").slice(-10)}?text=${encodeURIComponent(`${lastInv.type} ${lastInv.no}\nTotal: ${inr(lastInv.total)}\nThank you! — BillDNA`)}`:null;
+
+  return(<div>
+    <H1>POS Billing</H1>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:14}}>
+      <div>
+        <input style={inp()} autoFocus placeholder="🔍 Scan barcode / search product, Enter to add" value={q}
+          onChange={e=>setQ(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&matches[0])addItem(matches[0]);}}/>
+        {matches.map(p=><button key={p.id} onClick={()=>addItem(p)} style={{...btn(T.panel2),display:"block",width:"100%",textAlign:"left",marginBottom:4}}>
+          {p.name} — {inr(p.price)} <span style={{color:T.dim,fontSize:11}}>({totalStock(p)} in stock)</span></button>)}
+        <Card>
+          {cart.length===0&&<div style={{color:T.dim,fontSize:13}}>Cart empty. Scan or search to add items.</div>}
+          {cart.map(i=>(
+            <div key={i.pid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
+              <div style={{flex:1,fontSize:13}}>{i.name}<div style={{fontSize:10,color:T.dim}}>GST {i.gst}%</div></div>
+              <input type="number" style={{...inp(0),width:60}} value={i.rate} onChange={e=>setRate(i.pid,e.target.value)}/>
+              <button onClick={()=>setQty(i.pid,i.qty-1)} style={btn(T.panel2)}>−</button>
+              <b style={{width:24,textAlign:"center"}}>{i.qty}</b>
+              <button onClick={()=>setQty(i.pid,i.qty+1)} style={btn(T.panel2)}>+</button>
+              <div style={{width:80,textAlign:"right",fontSize:13}}>{inr(i.rate*i.qty)}</div>
+            </div>))}
+        </Card>
+      </div>
+      <div>
+        <Card>
+          <select style={inp()} value={type} onChange={e=>setType(e.target.value)}>{INV_TYPES.map(t=><option key={t}>{t}</option>)}</select>
+          <select style={inp()} value={custId} onChange={e=>setCustId(e.target.value)}>
+            <option value="">Walk-in customer</option>
+            {db.customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <div style={{fontSize:13,color:T.dim,display:"flex",justifyContent:"space-between"}}><span>Subtotal</span><span>{inr(sub)}</span></div>
+          {taxable&&<div style={{fontSize:13,color:T.dim,display:"flex",justifyContent:"space-between"}}><span>CGST+SGST</span><span>{inr(tax)}</span></div>}
+          <div style={{fontSize:18,fontWeight:800,display:"flex",justifyContent:"space-between",margin:"6px 0",color:T.acc}}><span>Total</span><span>{inr(total)}</span></div>
+          <select style={inp()} value={payMode} onChange={e=>setPayMode(e.target.value)}>{["Cash","UPI","Card","Credit"].map(m=><option key={m}>{m}</option>)}</select>
+          <input style={inp()} type="number" placeholder={`Paid amount (blank = full ${inr(total)})`} value={paidAmt} onChange={e=>setPaidAmt(e.target.value)}/>
+          <button onClick={finalize} style={{...btn(T.acc),width:"100%",color:"#08221E",fontWeight:800,padding:10}}>💾 Save & Bill</button>
+        </Card>
+        {lastInv&&<Card>
+          <div style={{fontWeight:700,marginBottom:6}}>Last bill: {lastInv.no}</div>
+          <div style={{fontSize:12,color:T.dim,marginBottom:8}}>{inr(lastInv.total)} · {lastInv.payMode}</div>
+          <button onClick={()=>window.print()} style={{...btn(T.panel2),marginRight:6}}>🖨 Print</button>
+          {waLink&&<a href={waLink} target="_blank" rel="noreferrer" style={{...btn(T.ok),color:"#08221E",fontWeight:700,textDecoration:"none",display:"inline-block"}}>WhatsApp</a>}
+        </Card>}
+      </div>
+    </div>
+  </div>);
+}
+
+/* ---------- Invoices list + returns (P3) ---------- */
+function Invoices({db,save,log,flash}){
+  const [filter,setFilter]=useState("All");
+  const list=db.invoices.filter(i=>filter==="All"||i.type===filter);
+  const receive=(id)=>{const d=structuredClone(db);const i=d.invoices.find(x=>x.id===id);
+    i.paid=i.total;d.payments.unshift({id:uid(),ts:Date.now(),ref:i.no,amt:i.total-0,dir:"in"});
+    log(d,`Payment received: ${i.no}`);save(d);flash("Marked paid");};
+  const doReturn=(id)=>{const d=structuredClone(db);const i=d.invoices.find(x=>x.id===id);
+    if(i.returned)return flash("Already returned");
+    i.returned=true;
+    i.items.forEach(it=>{const p=d.products.find(x=>x.id===it.pid);if(!p)return;
+      const wh=Object.keys(p.stock)[0]||"default";p.stock[wh]=(p.stock[wh]||0)+it.qty;
+      d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:it.pid,wh,qty:it.qty,type:"Sales Return",ref:i.no});});
+    log(d,`Sales return: ${i.no}`);save(d);flash("Return processed, stock restored");};
+  const custName=id=>db.customers.find(c=>c.id===id)?.name||"Walk-in";
+  return(<div>
+    <H1>Invoices</H1>
+    <select style={{...inp(),maxWidth:220}} value={filter} onChange={e=>setFilter(e.target.value)}>
+      <option>All</option>{INV_TYPES.map(t=><option key={t}>{t}</option>)}
+    </select>
+    {list.map(i=>(
+      <Card key={i.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:160}}>
+          <b>{i.no}</b> <span style={{fontSize:11,color:T.dim}}>· {i.type} · {fmtTs(i.ts)}</span>
+          <div style={{fontSize:12,color:T.dim}}>{custName(i.customerId)} · {i.items.length} items{i.returned&&<span style={{color:T.danger}}> · RETURNED</span>}</div>
+        </div>
+        <div style={{fontWeight:700,color:T.acc}}>{inr(i.total)}</div>
+        <div style={{fontSize:11,color:i.paid>=i.total?T.ok:T.acc2}}>{i.paid>=i.total?"Paid":`Due ${inr(i.total-i.paid)}`}</div>
+        {i.paid<i.total&&<button onClick={()=>receive(i.id)} style={btn(T.panel2)}>Mark paid</button>}
+        {!i.returned&&i.type.includes("Invoice")&&<button onClick={()=>doReturn(i.id)} style={{...btn(T.panel2),color:T.danger}}>Return</button>}
+      </div></Card>))}
+    {list.length===0&&<div style={{color:T.dim,fontSize:13}}>No invoices yet.</div>}
+  </div>);
+}
+
+/* ---------- Purchase (P4) ---------- */
+function Purchase({db,save,log,flash}){
+  const [supId,setSupId]=useState("");const [items,setItems]=useState([]);const [q,setQ]=useState("");
+  const matches=q?db.products.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())).slice(0,5):[];
+  const addItem=p=>{setItems(c=>{const ex=c.find(i=>i.pid===p.id);
+    return ex?c.map(i=>i.pid===p.id?{...i,qty:i.qty+1}:i):[...c,{pid:p.id,name:p.name,rate:p.cost||p.price,qty:1}];});setQ("");};
+  const total=items.reduce((a,i)=>a+i.rate*i.qty,0);
+  const saveP=(paidFull)=>{
+    if(!supId||items.length===0)return flash("Supplier & items required");
+    const d=structuredClone(db);d.seq.pur++;
+    const no=`PUR-${String(d.seq.pur).padStart(4,"0")}`;
+    d.purchases.unshift({id:uid(),no,supplierId:supId,items,total,paid:paidFull?total:0,ts:Date.now()});
+    items.forEach(i=>{const p=d.products.find(x=>x.id===i.pid);if(!p)return;
+      const wh=Object.keys(p.stock)[0]||"default";p.stock[wh]=(p.stock[wh]||0)+i.qty;
+      p.cost=i.rate;
+      d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:i.pid,wh,qty:i.qty,type:"Purchase",ref:no});});
+    log(d,`Purchase ${no} — ${inr(total)}`);save(d);setItems([]);setSupId("");flash(`${no} saved, stock updated`);
+  };
+  const payOff=id=>{const d=structuredClone(db);const p=d.purchases.find(x=>x.id===id);
+    p.paid=p.total;d.payments.unshift({id:uid(),ts:Date.now(),ref:p.no,amt:p.total,dir:"out"});
+    log(d,`Supplier paid: ${p.no}`);save(d);flash("Payment recorded");};
+  const supName=id=>db.suppliers.find(s=>s.id===id)?.name||"—";
+  return(<div>
+    <H1>Purchase</H1>
+    <Card>
+      <select style={inp()} value={supId} onChange={e=>setSupId(e.target.value)}>
+        <option value="">Select supplier *</option>
+        {db.suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+      <input style={inp()} placeholder="🔍 Add products to purchase" value={q} onChange={e=>setQ(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter"&&matches[0])addItem(matches[0]);}}/>
+      {matches.map(p=><button key={p.id} onClick={()=>addItem(p)} style={{...btn(T.panel2),display:"block",width:"100%",textAlign:"left",marginBottom:4}}>{p.name}</button>)}
+      {items.map(i=>(
+        <div key={i.pid} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+          <div style={{flex:1,fontSize:13}}>{i.name}</div>
+          <input type="number" style={{...inp(0),width:70}} value={i.rate} onChange={e=>setItems(c=>c.map(x=>x.pid===i.pid?{...x,rate:+e.target.value||0}:x))}/>
+          <input type="number" style={{...inp(0),width:55}} value={i.qty} onChange={e=>setItems(c=>c.map(x=>x.pid===i.pid?{...x,qty:+e.target.value||0}:x))}/>
+          <div style={{width:80,textAlign:"right",fontSize:13}}>{inr(i.rate*i.qty)}</div>
+        </div>))}
+      {items.length>0&&<>
+        <div style={{fontSize:16,fontWeight:800,color:T.acc,margin:"10px 0"}}>Total: {inr(total)}</div>
+        <button onClick={()=>saveP(true)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginRight:8}}>Save (Paid)</button>
+        <button onClick={()=>saveP(false)} style={{...btn(T.acc2),color:"#08221E",fontWeight:700}}>Save (Credit)</button></>}
+    </Card>
+    <div style={{fontWeight:700,margin:"12px 0 8px"}}>Purchase history</div>
+    {db.purchases.map(p=>(
+      <Card key={p.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}><b>{p.no}</b> <span style={{fontSize:11,color:T.dim}}>· {supName(p.supplierId)} · {fmtTs(p.ts)}</span></div>
+        <div style={{fontWeight:700}}>{inr(p.total)}</div>
+        <div style={{fontSize:11,color:p.paid>=p.total?T.ok:T.acc2}}>{p.paid>=p.total?"Paid":`Pending ${inr(p.total-p.paid)}`}</div>
+        {p.paid<p.total&&<button onClick={()=>payOff(p.id)} style={btn(T.panel2)}>Pay</button>}
+      </div></Card>))}
+  </div>);
+}
+
+/* ---------- Inventory (P5) ---------- */
+function Inventory({db,save,log,flash,company}){
+  const [tab,setTab]=useState("stock");
+  const [adjPid,setAdjPid]=useState("");const [adjQty,setAdjQty]=useState("");
+  const [trPid,setTrPid]=useState("");const [trFrom,setTrFrom]=useState("");const [trTo,setTrTo]=useState("");const [trQty,setTrQty]=useState("");
+  const [whName,setWhName]=useState("");
+  const whs=useMemo(()=>{
+    const s=new Set(["default"]);
+    db.products.forEach(p=>Object.keys(p.stock||{}).forEach(w=>s.add(w)));
+    (db.warehouses||[]).forEach(w=>s.add(w.name));
+    return [...s];
+  },[db]);
+
+  const addWh=()=>{if(!whName.trim())return flash("Name required");
+    const d=structuredClone(db);d.warehouses.push({id:uid(),name:whName.trim()});
+    log(d,`Warehouse added: ${whName}`);save(d);setWhName("");flash("Warehouse added");};
+
+  const adjust=()=>{
+    if(!adjPid||adjQty==="")return flash("Product & qty required");
+    const d=structuredClone(db);const p=d.products.find(x=>x.id===adjPid);
+    const wh=Object.keys(p.stock)[0]||"default";
+    const diff=+adjQty-(p.stock[wh]||0);
+    p.stock[wh]=+adjQty;
+    d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:p.id,wh,qty:diff,type:"Adjustment",ref:"ADJ"});
+    log(d,`Stock adjusted: ${p.name} → ${adjQty}`);save(d);setAdjQty("");flash("Adjusted");
+  };
+
+  const transfer=()=>{
+    if(!trPid||!trFrom||!trTo||!trQty||trFrom===trTo)return flash("Fill all transfer fields");
+    const d=structuredClone(db);const p=d.products.find(x=>x.id===trPid);
+    const qn=+trQty;
+    if((p.stock[trFrom]||0)<qn)return flash("Not enough stock in source");
+    p.stock[trFrom]=(p.stock[trFrom]||0)-qn;
+    p.stock[trTo]=(p.stock[trTo]||0)+qn;
+    d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:p.id,wh:`${trFrom}→${trTo}`,qty:qn,type:"Transfer",ref:"TRF"});
+    log(d,`Transfer: ${p.name} ${qn} (${trFrom}→${trTo})`);save(d);setTrQty("");flash("Transferred");
+  };
+
+  const pName=id=>db.products.find(p=>p.id===id)?.name||"—";
+  return(<div>
+    <H1>Inventory</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12}}>
+      {[["stock","Stock"],["adjust","Adjustment"],["transfer","Transfer"],["moves","Movements"],["wh","Warehouses"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>))}
+    </div>
+    {tab==="stock"&&db.products.map(p=>(
+      <Card key={p.id}><div style={{display:"flex",gap:10,alignItems:"center"}}>
+        <div style={{flex:1}}><b>{p.name}</b>
+          <div style={{fontSize:11,color:T.dim}}>{Object.entries(p.stock||{}).map(([w,q])=>`${w}: ${q}`).join(" · ")||"no stock"}</div></div>
+        <div style={{fontWeight:700,color:totalStock(p)<=p.low?T.acc2:T.ok}}>{totalStock(p)} {p.unit}</div>
+      </div></Card>))}
+    {tab==="adjust"&&<Card>
+      <select style={inp()} value={adjPid} onChange={e=>setAdjPid(e.target.value)}>
+        <option value="">Select product</option>
+        {db.products.map(p=><option key={p.id} value={p.id}>{p.name} (now {totalStock(p)})</option>)}
+      </select>
+      <input style={inp()} type="number" placeholder="New qty (physical count)" value={adjQty} onChange={e=>setAdjQty(e.target.value)}/>
+      <button onClick={adjust} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Apply adjustment</button>
+    </Card>}
+    {tab==="transfer"&&<Card>
+      <select style={inp()} value={trPid} onChange={e=>setTrPid(e.target.value)}>
+        <option value="">Select product</option>
+        {db.products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 90px",gap:8}}>
+        <select style={inp(0)} value={trFrom} onChange={e=>setTrFrom(e.target.value)}><option value="">From</option>{whs.map(w=><option key={w}>{w}</option>)}</select>
+        <select style={inp(0)} value={trTo} onChange={e=>setTrTo(e.target.value)}><option value="">To</option>{whs.map(w=><option key={w}>{w}</option>)}</select>
+        <input style={inp(0)} type="number" placeholder="Qty" value={trQty} onChange={e=>setTrQty(e.target.value)}/>
+      </div>
+      <button onClick={transfer} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Transfer</button>
+    </Card>}
+    {tab==="moves"&&<Card>
+      {db.stockMoves.slice(0,50).map(m=>(
+        <div key={m.id} style={{fontSize:12,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+          <span style={{color:T.acc}}>{fmtTs(m.ts)}</span> · {pName(m.pid)} · <b style={{color:m.qty>0?T.ok:T.danger}}>{m.qty>0?"+":""}{m.qty}</b> · {m.type} ({m.ref}) · {m.wh}
+        </div>))}
+      {db.stockMoves.length===0&&<div style={{color:T.dim,fontSize:13}}>No movements yet.</div>}
+    </Card>}
+    {tab==="wh"&&<Card>
+      <div style={{display:"flex",gap:8}}>
+        <input style={inp(0)} placeholder="Warehouse name" value={whName} onChange={e=>setWhName(e.target.value)}/>
+        <button onClick={addWh} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Add</button>
+      </div>
+      <div style={{marginTop:10,fontSize:13,color:T.dim}}>{whs.join(" · ")}</div>
+    </Card>}
+  </div>);
+}
+
+/* ---------- Companies (P1) ---------- */
+function Companies({db,save,log,notify,flash}){
+  const [name,setName]=useState("");const [gstin,setGstin]=useState("");const [city,setCity]=useState("");
+  const [bName,setBName]=useState("");const [sel,setSel]=useState(db.activeCompanyId);
+  const addCompany=()=>{
+    if(!name.trim())return flash("Company name required");
+    const d=structuredClone(db);
+    const c={id:uid(),name:name.trim(),gstin:gstin.trim().toUpperCase(),city:city.trim(),branches:[{id:uid(),name:"Main Branch",city:city.trim()}]};
+    d.companies.push(c);
+    if(!d.activeCompanyId){d.activeCompanyId=c.id;d.activeBranchId=c.branches[0].id;}
+    log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created`);
+    save(d);setName("");setGstin("");setCity("");setSel(c.id);flash("Company created");
+  };
+  const addBranch=()=>{
+    if(!sel||!bName.trim())return flash("Select company & branch name");
+    const d=structuredClone(db);const c=d.companies.find(x=>x.id===sel);
+    c.branches.push({id:uid(),name:bName.trim()});
+    log(d,`Branch added: ${bName}`);save(d);setBName("");flash("Branch added");
+  };
+  const activate=(cId,bId)=>{const d=structuredClone(db);
+    d.activeCompanyId=cId;d.activeBranchId=bId;
+    log(d,`Context switched`);save(d);flash("Switched");};
+  return(<div>
+    <H1>Companies & Branches</H1>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <Card><div style={{fontWeight:700,marginBottom:8}}>New company</div>
+        <input style={inp()} placeholder="Company name *" value={name} onChange={e=>setName(e.target.value)}/>
+        <input style={inp()} placeholder="GSTIN" value={gstin} onChange={e=>setGstin(e.target.value)}/>
+        <input style={inp()} placeholder="City" value={city} onChange={e=>setCity(e.target.value)}/>
+        <button onClick={addCompany} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Create</button></Card>
+      <Card><div style={{fontWeight:700,marginBottom:8}}>New branch</div>
+        <select style={inp()} value={sel||""} onChange={e=>setSel(e.target.value)}>
+          <option value="">Select company</option>
+          {db.companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <input style={inp()} placeholder="Branch name *" value={bName} onChange={e=>setBName(e.target.value)}/>
+        <button onClick={addBranch} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Add branch</button></Card>
+    </div>
+    {db.companies.map(c=>(
+      <Card key={c.id}><div style={{fontWeight:700}}>{c.name} {c.gstin&&<span style={{color:T.dim,fontSize:12}}>· {c.gstin}</span>}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:8}}>
+          {c.branches.map(b=>{const active=db.activeCompanyId===c.id&&db.activeBranchId===b.id;
+            return <button key={b.id} onClick={()=>activate(c.id,b.id)}
+              style={{...btn(active?T.acc:T.panel2),color:active?"#08221E":T.text,fontWeight:active?700:400}}>{b.name}{active?" ✓":""}</button>;})}
+        </div></Card>))}
+  </div>);
+}
+
+/* ---------- Users (P1) ---------- */
+function Users({db,save,log,flash,session}){
+  const [f,setF]=useState({name:"",email:"",pin:"",role:"Cashier"});
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+  const add=()=>{
+    if(!f.name.trim()||!f.email.trim()||f.pin.length<4)return flash("Name, email & 4-digit PIN required");
+    if(db.users.some(u=>u.email.toLowerCase()===f.email.trim().toLowerCase()))return flash("Email exists");
+    const d=structuredClone(db);
+    d.users.push({id:uid(),...f,name:f.name.trim(),email:f.email.trim(),active:true});
+    log(d,`User added: ${f.name} (${f.role})`);save(d);setF({name:"",email:"",pin:"",role:"Cashier"});flash("User added");
+  };
+  const toggle=id=>{const d=structuredClone(db);const u=d.users.find(x=>x.id===id);
+    if(u.id===session.id)return flash("Cannot deactivate yourself");
+    u.active=!u.active;log(d,`User ${u.active?"activated":"deactivated"}: ${u.name}`);save(d);};
+  return(<div>
+    <H1>Users & Roles</H1>
+    <Card><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8}}>
+      <input style={inp(0)} placeholder="Name *" value={f.name} onChange={e=>set("name",e.target.value)}/>
+      <input style={inp(0)} placeholder="Email *" value={f.email} onChange={e=>set("email",e.target.value)}/>
+      <input style={inp(0)} placeholder="PIN *" value={f.pin} onChange={e=>set("pin",e.target.value)}/>
+      <select style={inp(0)} value={f.role} onChange={e=>set("role",e.target.value)}>{Object.keys(ROLE_PRESETS).map(r=><option key={r}>{r}</option>)}</select>
+    </div>
+    <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add user</button></Card>
+    {db.users.map(u=>(
+      <Card key={u.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}><b>{u.name}</b> <span style={{color:T.dim,fontSize:12}}>· {u.email} · {u.role}</span></div>
+        <span style={{fontSize:11,color:u.active?T.ok:T.danger}}>{u.active?"Active":"Inactive"}</span>
+        {u.id!==session.id&&<button onClick={()=>toggle(u.id)} style={btn(T.panel2)}>{u.active?"Deactivate":"Activate"}</button>}
+      </div></Card>))}
+  </div>);
+}
+
+/* ---------- Notifications / Logs / Backup (P1) ---------- */
+function Notifications({db,save}){
+  const markAll=()=>{const d=structuredClone(db);d.notifications.forEach(n=>n.read=true);save(d);};
+  return(<div>
+    <div style={{display:"flex",alignItems:"center"}}><H1>Notifications</H1>
+      <button onClick={markAll} style={{...btn(T.panel2),marginLeft:"auto"}}>Mark all read</button></div>
+    {db.notifications.map(n=>(
+      <Card key={n.id}><div style={{fontSize:13,color:n.read?T.dim:T.text}}>{!n.read&&<span style={{color:T.acc}}>● </span>}{n.msg}</div>
+        <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtTs(n.ts)}</div></Card>))}
+  </div>);
+}
+function Logs({db}){
+  return(<div><H1>Activity Log</H1><Card>
+    {db.logs.map(l=><div key={l.id} style={{fontSize:12,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
+      <span style={{color:T.acc}}>{fmtTs(l.ts)}</span> · <b>{l.user}</b> — <span style={{color:T.dim}}>{l.action}</span></div>)}
+  </Card></div>);
+}
+function Backup({db,save,log,flash}){
+  const [txt,setTxt]=useState("");
+  const download=()=>{
+    const blob=new Blob([JSON.stringify(db,null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`billdna-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();
+    const d=structuredClone(db);log(d,"Backup downloaded");save(d);
+    flash("Backup downloaded — upload to your Drive or email yourself");
+  };
+  const restore=()=>{try{
+    const p=JSON.parse(txt);
+    if(!p.users||!p.companies)throw new Error("bad");
+    log(p,"Data restored from backup");save(p);setTxt("");flash("Restored");
+  }catch{flash("Invalid backup content");}};
+  return(<div>
+    <H1>Backup & Restore</H1>
+    <Card><div style={{fontWeight:700,marginBottom:6}}>Backup</div>
+      <div style={{fontSize:12,color:T.dim,marginBottom:10}}>Downloads full data as JSON. Save it to your Google Drive or email it to yourself.</div>
+      <button onClick={download} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Download backup</button></Card>
+    <Card><div style={{fontWeight:700,marginBottom:6}}>Restore</div>
+      <textarea style={{...inp(0),minHeight:100,width:"100%",boxSizing:"border-box",fontFamily:"monospace",fontSize:11}}
+        value={txt} onChange={e=>setTxt(e.target.value)} placeholder='Paste backup JSON here'/>
+      <button onClick={restore} style={{...btn(T.danger),color:"#fff",fontWeight:700,marginTop:8}}>Restore data</button></Card>
+  </div>);
+}
+
+/* ---------- UI primitives ---------- */
+const H1=({children})=><div style={{fontSize:20,fontWeight:800,marginBottom:12}}>{children}</div>;
+const Card=({children})=><div style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:10,padding:14,marginBottom:12}}>{children}</div>;
+const btn=bg=>({background:bg,border:"none",borderRadius:8,padding:"8px 12px",color:T.text,cursor:"pointer",fontSize:13});
+const inp=(mb=8)=>({background:T.panel2,border:`1px solid ${T.line}`,borderRadius:8,padding:"9px 10px",color:T.text,width:"100%",boxSizing:"border-box",marginBottom:mb,fontSize:13,display:"block"});
