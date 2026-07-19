@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 /* ============================================================
    BillDNA ERP — Phases 1–5 (integrated)
@@ -35,6 +35,8 @@ export default function BillDNA(){
   const [session,setSession]=useState(null);
   const [view,setView]=useState("dashboard");
   const [toast,setToast]=useState(null);
+  const [narrow,setNarrow]=useState(typeof window!=="undefined"&&window.innerWidth<720);
+  useEffect(()=>{const on=()=>setNarrow(window.innerWidth<720);window.addEventListener("resize",on);return()=>window.removeEventListener("resize",on);},[]);
 
   useEffect(()=>{(async()=>{
     try{
@@ -107,7 +109,7 @@ export default function BillDNA(){
           {NAV.filter(n=>n[2]).map(([k,label])=>(
             <button key={k} onClick={()=>setView(k)} style={{...btn(view===k?T.acc:"transparent"),color:view===k?"#08221E":T.text,textAlign:"left",fontWeight:view===k?700:400,fontSize:12.5}}>{label}</button>
           ))}
-          <div style={{marginTop:"auto",fontSize:10,color:T.dim,padding:6}}>Phases 1–5 · v2.0</div>
+          {!narrow&&<div style={{marginTop:"auto",fontSize:10,color:T.dim,padding:6}}>v1.0 · 18 phases</div>}
         </div>
         <div style={{flex:1,overflow:"auto",padding:18}}>
           {view==="dashboard"&&<Dashboard {...ctx} lowStock={lowStock}/>}
@@ -194,7 +196,7 @@ function Products({db,save,log,flash}){
   const [f,setF]=useState(empty);const [q,setQ]=useState("");
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
   const add=()=>{
-    if(!f.name.trim()||!f.price)return flash("Name & selling price required");
+    if(!f.name.trim()||!(+f.price>0))return flash("Name & valid selling price (>0) required");
     const d=structuredClone(db);
     d.products.push({id:uid(),...f,name:f.name.trim(),price:+f.price,cost:+f.cost||0,gst:+f.gst,low:+f.low||0,
       barcode:f.barcode.trim()||("BD"+Date.now().toString().slice(-8)),stock:{}});
@@ -278,6 +280,7 @@ function POS({db,save,log,notify,flash,branch}){
   const [custId,setCustId]=useState("");const [type,setType]=useState("GST Invoice");
   const [payMode,setPayMode]=useState("Cash");const [paidAmt,setPaidAmt]=useState("");
   const [lastInv,setLastInv]=useState(null);
+  const savingRef=useRef(false);
 
   const matches=q?db.products.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.barcode===q||p.sku.toLowerCase()===q.toLowerCase()).slice(0,6):[];
   const addItem=p=>{setCart(c=>{const ex=c.find(i=>i.pid===p.id);
@@ -292,9 +295,13 @@ function POS({db,save,log,notify,flash,branch}){
 
   const finalize=()=>{
     if(cart.length===0)return flash("Cart empty");
+    if(savingRef.current)return;
+    savingRef.current=true;
+    setTimeout(()=>{savingRef.current=false;},0);
     const d=structuredClone(db);
     d.seq.inv++;
-    const no=`${type.split(" ")[0].slice(0,3).toUpperCase()}-${String(d.seq.inv).padStart(4,"0")}`;
+    const pfx=d.settings?.invPrefix?d.settings.invPrefix+"-":"";
+    const no=`${pfx}${type.split(" ")[0].slice(0,3).toUpperCase()}-${String(d.seq.inv).padStart(4,"0")}`;
     const paid=paidAmt===""?total:Math.min(+paidAmt,total);
     const inv={id:uid(),no,type,customerId:custId||null,items:cart,sub,tax,total,paid,payMode,ts:Date.now(),branchId:branch?.id||null,returned:false};
     d.invoices.unshift(inv);
@@ -1361,7 +1368,7 @@ function Hr({db,save,log,flash}){
       if(s==="P")p++;else if(s==="A")a++;else if(s==="H")h++;});
     return {p,a,h,payable:p+h*0.5};
   };
-  const workingDays=26; // standard
+  const workingDays=+(db.settings?.workingDays)||26;
   const calcSalary=(e,incentive)=>{
     const s=stat(e.id);
     const base=e.salary*Math.min(1,s.payable/workingDays);
@@ -1596,7 +1603,8 @@ function Store({db,save,log,notify,flash,company}){
     if(i<STAGES.length-1){o.status=STAGES[i+1];
       if(o.status==="Delivered"){ // convert to invoice + stock out
         d.seq.inv++;
-        const no=`GST-${String(d.seq.inv).padStart(4,"0")}`;
+        const pfx=d.settings?.invPrefix?d.settings.invPrefix+"-":"";
+        const no=`${pfx}GST-${String(d.seq.inv).padStart(4,"0")}`;
         const sub=o.items.reduce((a,it)=>a+it.rate*it.qty,0);
         const tax=o.items.reduce((a,it)=>{const p=d.products.find(x=>x.id===it.pid);return a+it.rate*it.qty*(p?.gst||0)/100;},0);
         d.invoices.unshift({id:uid(),no,type:"GST Invoice",customerId:null,items:o.items.map(it=>{const p=d.products.find(x=>x.id===it.pid);return{...it,gst:p?.gst||0,hsn:p?.hsn||"",unit:p?.unit||"pcs"};}),sub,tax,total:Math.round((sub+tax)*100)/100,paid:Math.round((sub+tax)*100)/100,payMode:"UPI",ts:Date.now(),branchId:null,returned:false,orderNo:o.no});

@@ -1,0 +1,14 @@
+import { JSDOM } from "jsdom";
+const dom = new JSDOM('<div id="root"></div>', { url: "https://localhost" });
+global.window = dom.window; global.document = dom.window.document;
+Object.defineProperty(global,"navigator",{value:dom.window.navigator,configurable:true});
+window.storage = { get: async()=>null, set: async()=>({}), delete: async()=>({}), list: async()=>({keys:[]}) };
+const React = (await import("react")).default;
+const { createRoot } = await import("react-dom/client");
+const App = (await import("./out-esm.js")).default;
+const root = createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+await new Promise(r=>setTimeout(r,300));
+const html = document.getElementById("root").innerHTML;
+console.log(html.includes("BillDNA")||html.includes("Loading") ? "RENDER OK" : "RENDER EMPTY");
+console.log(html.slice(0,200));
