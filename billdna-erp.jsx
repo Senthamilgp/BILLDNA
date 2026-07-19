@@ -70,6 +70,7 @@ export default function BillDNA(){
     ["purchase","📦 Purchase",can("purchase")],
     ["inventory","🏬 Inventory",can("inventory")],
     ["accounting","📒 Accounting",can("accounting")],
+    ["gst","🧾 GST Reports",can("accounting")||can("reports")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -105,6 +106,7 @@ export default function BillDNA(){
           {view==="purchase"&&<Purchase {...ctx}/>}
           {view==="inventory"&&<Inventory {...ctx}/>}
           {view==="accounting"&&<Accounting {...ctx}/>}
+          {view==="gst"&&<GstReports {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -780,6 +782,141 @@ function Accounting({db,save,log,flash}){
 }
 const custName=(db,id)=>db.customers.find(c=>c.id===id)?.name||"Walk-in";
 const supName=(db,id)=>db.suppliers.find(s=>s.id===id)?.name||"—";
+
+/* ---------- GST & Tax Reports (P7) ---------- */
+function GstReports({db,company,flash}){
+  const [tab,setTab]=useState("gstr1");
+  const [month,setMonth]=useState(new Date().toISOString().slice(0,7));
+
+  const gstInvs=db.invoices.filter(i=>i.type==="GST Invoice"&&!i.returned&&new Date(i.ts).toISOString().slice(0,7)===month);
+  const allTaxInvs=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned&&new Date(i.ts).toISOString().slice(0,7)===month);
+  const purchases=db.purchases.filter(p=>new Date(p.ts).toISOString().slice(0,7)===month);
+
+  // Rate-wise breakup (outward)
+  const rateWise=useMemo(()=>{
+    const m={};
+    allTaxInvs.forEach(i=>i.items.forEach(it=>{
+      const taxable=it.rate*it.qty;
+      const r=it.gst||0;
+      m[r]=m[r]||{taxable:0,cgst:0,sgst:0};
+      m[r].taxable+=taxable;
+      m[r].cgst+=taxable*r/200;
+      m[r].sgst+=taxable*r/200;
+    }));
+    return m;
+  },[allTaxInvs]);
+
+  const totTaxable=Object.values(rateWise).reduce((a,v)=>a+v.taxable,0);
+  const totCgst=Object.values(rateWise).reduce((a,v)=>a+v.cgst,0);
+  const totSgst=Object.values(rateWise).reduce((a,v)=>a+v.sgst,0);
+
+  // ITC estimate from purchases (uses product GST rate at time of view)
+  const itc=useMemo(()=>{
+    let t=0;
+    purchases.forEach(p=>p.items.forEach(it=>{
+      const prod=db.products.find(x=>x.id===it.pid);
+      t+=(it.rate*it.qty)*(prod?.gst||0)/100;
+    }));
+    return t;
+  },[purchases,db.products]);
+
+  // HSN summary
+  const hsn=useMemo(()=>{
+    const m={};
+    allTaxInvs.forEach(i=>i.items.forEach(it=>{
+      const k=it.hsn||"—";
+      m[k]=m[k]||{qty:0,taxable:0,tax:0,gst:it.gst};
+      m[k].qty+=it.qty;
+      m[k].taxable+=it.rate*it.qty;
+      m[k].tax+=it.rate*it.qty*(it.gst||0)/100;
+    }));
+    return m;
+  },[allTaxInvs]);
+
+  const custName=id=>db.customers.find(c=>c.id===id);
+
+  const exportJson=(name,data)=>{
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`${name}-${month}.json`;a.click();
+    flash(`${name} exported — CA-kku anuppalam`);
+  };
+
+  const gstr1Data={gstin:company?.gstin||"",period:month,
+    b2b:gstInvs.filter(i=>custName(i.customerId)?.gstin).map(i=>({inv:i.no,date:new Date(i.ts).toLocaleDateString("en-IN"),party:custName(i.customerId)?.name,gstin:custName(i.customerId)?.gstin,taxable:i.sub,tax:i.tax,total:i.total})),
+    b2c:gstInvs.filter(i=>!custName(i.customerId)?.gstin).map(i=>({inv:i.no,date:new Date(i.ts).toLocaleDateString("en-IN"),taxable:i.sub,tax:i.tax,total:i.total}))};
+
+  const gstr3bData={gstin:company?.gstin||"",period:month,
+    outward:{taxable:totTaxable,cgst:totCgst,sgst:totSgst,igst:0},
+    itc:{estimated:itc},netPayable:Math.max(0,totCgst+totSgst-itc)};
+
+  const TABS=[["gstr1","GSTR-1"],["gstr3b","GSTR-3B"],["hsn","HSN Summary"],["tax","Tax Summary"]];
+  const th={fontSize:11,color:T.dim,fontWeight:700,padding:"4px 0"};
+  const td={fontSize:12.5,padding:"5px 0",borderBottom:`1px solid ${T.line}`};
+
+  return(<div>
+    <H1>GST Reports</H1>
+    <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
+      <input type="month" style={{...inp(0),width:150,marginLeft:"auto"}} value={month} onChange={e=>setMonth(e.target.value)}/>
+    </div>
+    {!company?.gstin&&<Card><div style={{color:T.acc2,fontSize:13}}>⚠ Company GSTIN set pannala — Companies page-la add pannunga. Reports work aagum, but filing-ku GSTIN venum.</div></Card>}
+
+    {tab==="gstr1"&&<>
+      <Card>
+        <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
+          <div style={{fontWeight:700}}>GSTR-1 · Outward supplies · {month}</div>
+          <button onClick={()=>exportJson("GSTR1",gstr1Data)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
+        </div>
+        <div style={{fontWeight:700,fontSize:13,color:T.acc,margin:"8px 0 4px"}}>B2B ({gstr1Data.b2b.length} invoices)</div>
+        <div style={{display:"flex",gap:8}}><span style={{...th,width:90}}>Invoice</span><span style={{...th,flex:1}}>Party / GSTIN</span><span style={{...th,width:90,textAlign:"right"}}>Taxable</span><span style={{...th,width:80,textAlign:"right"}}>Tax</span></div>
+        {gstr1Data.b2b.map(r=><div key={r.inv} style={{display:"flex",gap:8}}>
+          <span style={{...td,width:90}}>{r.inv}</span><span style={{...td,flex:1,color:T.dim}}>{r.party}<br/><span style={{fontSize:10}}>{r.gstin}</span></span>
+          <span style={{...td,width:90,textAlign:"right"}}>{inr(r.taxable)}</span><span style={{...td,width:80,textAlign:"right"}}>{inr(r.tax)}</span></div>)}
+        {gstr1Data.b2b.length===0&&<div style={{color:T.dim,fontSize:12}}>No B2B invoices (customer GSTIN missing-na B2C-la varum)</div>}
+        <div style={{fontWeight:700,fontSize:13,color:T.acc,margin:"12px 0 4px"}}>B2C ({gstr1Data.b2c.length} invoices)</div>
+        {gstr1Data.b2c.map(r=><div key={r.inv} style={{display:"flex",gap:8}}>
+          <span style={{...td,width:90}}>{r.inv}</span><span style={{...td,flex:1,color:T.dim}}>{r.date}</span>
+          <span style={{...td,width:90,textAlign:"right"}}>{inr(r.taxable)}</span><span style={{...td,width:80,textAlign:"right"}}>{inr(r.tax)}</span></div>)}
+        {gstr1Data.b2c.length===0&&<div style={{color:T.dim,fontSize:12}}>No B2C invoices this month</div>}
+      </Card>
+    </>}
+
+    {tab==="gstr3b"&&<Card>
+      <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
+        <div style={{fontWeight:700}}>GSTR-3B · Summary · {month}</div>
+        <button onClick={()=>exportJson("GSTR3B",gstr3bData)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
+      </div>
+      {[["3.1(a) Outward taxable supplies",totTaxable],["CGST",totCgst],["SGST/UTGST",totSgst],["IGST (inter-state — not tracked yet)",0],
+        ["4. Eligible ITC (est. from purchases)",itc],["Net tax payable",gstr3bData.netPayable]].map(([l,v])=>(
+        <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"7px 0",borderBottom:`1px solid ${T.line}`,
+          fontWeight:l.includes("Net")?800:400,color:l.includes("Net")?T.acc2:T.text}}>
+          <span>{l}</span><span>{inr(v)}</span></div>))}
+      <div style={{fontSize:11,color:T.dim,marginTop:8}}>Note: ITC estimate — actual filing-ku CA verify pannanum. IGST inter-state support Phase later-la varum.</div>
+    </Card>}
+
+    {tab==="hsn"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8}}>HSN-wise Summary · {month}</div>
+      <div style={{display:"flex",gap:8}}><span style={{...th,width:90}}>HSN</span><span style={{...th,width:60,textAlign:"right"}}>Qty</span><span style={{...th,flex:1,textAlign:"right"}}>Taxable</span><span style={{...th,width:70,textAlign:"right"}}>GST%</span><span style={{...th,width:90,textAlign:"right"}}>Tax</span></div>
+      {Object.entries(hsn).map(([k,v])=><div key={k} style={{display:"flex",gap:8}}>
+        <span style={{...td,width:90}}>{k}</span><span style={{...td,width:60,textAlign:"right"}}>{v.qty}</span>
+        <span style={{...td,flex:1,textAlign:"right"}}>{inr(v.taxable)}</span><span style={{...td,width:70,textAlign:"right"}}>{v.gst}%</span>
+        <span style={{...td,width:90,textAlign:"right"}}>{inr(v.tax)}</span></div>)}
+      {Object.keys(hsn).length===0&&<div style={{color:T.dim,fontSize:12}}>No invoices this month</div>}
+    </Card>}
+
+    {tab==="tax"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8}}>Rate-wise Tax Summary · {month}</div>
+      <div style={{display:"flex",gap:8}}><span style={{...th,width:70}}>Rate</span><span style={{...th,flex:1,textAlign:"right"}}>Taxable</span><span style={{...th,width:90,textAlign:"right"}}>CGST</span><span style={{...th,width:90,textAlign:"right"}}>SGST</span></div>
+      {Object.entries(rateWise).map(([r,v])=><div key={r} style={{display:"flex",gap:8}}>
+        <span style={{...td,width:70}}>{r}%</span><span style={{...td,flex:1,textAlign:"right"}}>{inr(v.taxable)}</span>
+        <span style={{...td,width:90,textAlign:"right"}}>{inr(v.cgst)}</span><span style={{...td,width:90,textAlign:"right"}}>{inr(v.sgst)}</span></div>)}
+      <div style={{display:"flex",gap:8,fontWeight:800,marginTop:4}}>
+        <span style={{width:70}}>Total</span><span style={{flex:1,textAlign:"right"}}>{inr(totTaxable)}</span>
+        <span style={{width:90,textAlign:"right",color:T.acc}}>{inr(totCgst)}</span><span style={{width:90,textAlign:"right",color:T.acc}}>{inr(totSgst)}</span></div>
+    </Card>}
+  </div>);
+}
 
 /* ---------- UI primitives ---------- */
 const H1=({children})=><div style={{fontSize:20,fontWeight:800,marginBottom:12}}>{children}</div>;
