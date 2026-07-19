@@ -73,6 +73,7 @@ export default function BillDNA(){
     ["gst","🧾 GST Reports",can("accounting")||can("reports")],
     ["crm","🤝 CRM",can("billing")||can("masters")],
     ["reports","📈 Reports",can("reports")],
+    ["mfg","🏭 Manufacturing",can("inventory")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -111,6 +112,7 @@ export default function BillDNA(){
           {view==="gst"&&<GstReports {...ctx}/>}
           {view==="crm"&&<Crm {...ctx}/>}
           {view==="reports"&&<Reports {...ctx}/>}
+          {view==="mfg"&&<Manufacturing {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -1168,6 +1170,142 @@ function Reports({db}){
         <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"7px 0",fontWeight:l.includes("Net")?800:400,color:c,borderBottom:`1px solid ${T.line}`}}>
           <span>{l}</span><span>{inr(Math.abs(v))}{v<0?" (−)":""}</span></div>))}
       <div style={{fontSize:11,color:T.dim,marginTop:8}}>Note: Gross profit product cost basis-la — cost update pannala-na 0 cost assume aagum.</div>
+    </Card>}
+  </div>);
+}
+
+/* ---------- Manufacturing (P10) ---------- */
+function Manufacturing({db,save,log,notify,flash}){
+  const [tab,setTab]=useState("bom");
+  // BOM builder
+  const [bomFor,setBomFor]=useState("");const [bomItems,setBomItems]=useState([]);const [bomLabor,setBomLabor]=useState("");
+  const [rmPid,setRmPid]=useState("");const [rmQty,setRmQty]=useState("");
+  // Production
+  const [prodBomId,setProdBomId]=useState("");const [prodQty,setProdQty]=useState("");const [scrapQty,setScrapQty]=useState("");
+
+  const boms=db.boms||[];
+  const runs=db.productionRuns||[];
+  const pName=id=>db.products.find(p=>p.id===id)?.name||"—";
+  const pCost=id=>db.products.find(p=>p.id===id)?.cost||0;
+
+  const addRm=()=>{
+    if(!rmPid||!+rmQty)return flash("Raw material & qty required");
+    setBomItems(c=>{const ex=c.find(i=>i.pid===rmPid);
+      return ex?c.map(i=>i.pid===rmPid?{...i,qty:+rmQty}:i):[...c,{pid:rmPid,qty:+rmQty}];});
+    setRmPid("");setRmQty("");
+  };
+
+  const bomCost=items=>items.reduce((a,i)=>a+pCost(i.pid)*i.qty,0);
+
+  const saveBom=()=>{
+    if(!bomFor||bomItems.length===0)return flash("Finished product & raw materials required");
+    const d=structuredClone(db);d.boms=d.boms||[];
+    if(d.boms.some(b=>b.productId===bomFor))return flash("BOM already exists for this product");
+    d.boms.push({id:uid(),productId:bomFor,items:bomItems,labor:+bomLabor||0});
+    log(d,`BOM created: ${pName(bomFor)}`);
+    save(d);setBomFor("");setBomItems([]);setBomLabor("");flash("BOM saved");
+  };
+  const delBom=id=>{const d=structuredClone(db);
+    d.boms=d.boms.filter(b=>b.id!==id);log(d,"BOM deleted");save(d);};
+
+  const produce=()=>{
+    const bom=boms.find(b=>b.id===prodBomId);
+    if(!bom||!+prodQty)return flash("BOM & qty required");
+    const qty=+prodQty, scrap=+scrapQty||0;
+    const d=structuredClone(db);
+    // check raw stock
+    for(const i of bom.items){
+      const p=d.products.find(x=>x.id===i.pid);
+      if(!p||totalStock(p)<i.qty*qty)return flash(`Raw material pathala: ${pName(i.pid)} (need ${i.qty*qty}, have ${p?totalStock(p):0})`);
+    }
+    // consume raw
+    bom.items.forEach(i=>{
+      const p=d.products.find(x=>x.id===i.pid);
+      const wh=Object.keys(p.stock)[0]||"default";
+      p.stock[wh]=(p.stock[wh]||0)-i.qty*qty;
+      d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:i.pid,wh,qty:-i.qty*qty,type:"Production consume",ref:"MFG"});
+    });
+    // add finished (net of scrap)
+    const fp=d.products.find(x=>x.id===bom.productId);
+    const goodQty=Math.max(0,qty-scrap);
+    const wh=Object.keys(fp.stock)[0]||"default";
+    fp.stock[wh]=(fp.stock[wh]||0)+goodQty;
+    d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:fp.id,wh,qty:goodQty,type:"Production output",ref:"MFG"});
+    // costing: (raw cost + labor) per unit produced spread over good units
+    const totalCost=(bomCost(bom.items)+bom.labor)*qty;
+    const unitCost=goodQty>0?totalCost/goodQty:0;
+    fp.cost=Math.round(unitCost*100)/100;
+    d.productionRuns=d.productionRuns||[];
+    d.productionRuns.unshift({id:uid(),ts:Date.now(),bomId:bom.id,productId:bom.productId,qty,scrap,goodQty,totalCost,unitCost:fp.cost});
+    log(d,`Production: ${pName(bom.productId)} ×${goodQty} (scrap ${scrap}) @ ${inr(fp.cost)}/unit`);
+    if(scrap>0)notify(d,`Scrap alert: ${scrap} units in ${pName(bom.productId)} production`);
+    save(d);setProdQty("");setScrapQty("");flash(`Produced ${goodQty} units · cost ${inr(fp.cost)}/unit`);
+  };
+
+  const TABS=[["bom","BOM"],["produce","Production"],["runs","History & Costing"]];
+  return(<div>
+    <H1>Manufacturing</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12}}>
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
+    </div>
+
+    {tab==="bom"&&<>
+      <Card>
+        <div style={{fontWeight:700,marginBottom:8}}>New BOM (Bill of Materials)</div>
+        <select style={inp()} value={bomFor} onChange={e=>setBomFor(e.target.value)}>
+          <option value="">Finished product *</option>
+          {db.products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr auto",gap:8}}>
+          <select style={inp(0)} value={rmPid} onChange={e=>setRmPid(e.target.value)}>
+            <option value="">Raw material</option>
+            {db.products.filter(p=>p.id!==bomFor).map(p=><option key={p.id} value={p.id}>{p.name} (cost {inr(p.cost)})</option>)}
+          </select>
+          <input style={inp(0)} type="number" placeholder="Qty per unit" value={rmQty} onChange={e=>setRmQty(e.target.value)}/>
+          <button onClick={addRm} style={{...btn(T.panel2)}}>+ Add</button>
+        </div>
+        {bomItems.map(i=><div key={i.pid} style={{fontSize:12.5,padding:"4px 0",display:"flex",gap:8}}>
+          <span style={{flex:1}}>{pName(i.pid)}</span><span>×{i.qty}</span><span style={{color:T.dim}}>{inr(pCost(i.pid)*i.qty)}</span>
+          <button onClick={()=>setBomItems(c=>c.filter(x=>x.pid!==i.pid))} style={{...btn(T.panel2),color:T.danger,padding:"2px 8px"}}>✕</button></div>)}
+        <input style={inp()} type="number" placeholder="Labor/overhead cost per unit ₹" value={bomLabor} onChange={e=>setBomLabor(e.target.value)}/>
+        {bomItems.length>0&&<div style={{fontSize:13,fontWeight:700,color:T.acc,marginBottom:8}}>Est. cost/unit: {inr(bomCost(bomItems)+(+bomLabor||0))}</div>}
+        <button onClick={saveBom} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Save BOM</button>
+      </Card>
+      {boms.map(b=>(
+        <Card key={b.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}><b>{pName(b.productId)}</b>
+            <div style={{fontSize:11,color:T.dim}}>{b.items.map(i=>`${pName(i.pid)} ×${i.qty}`).join(" + ")}{b.labor?` + labor ${inr(b.labor)}`:""}</div></div>
+          <span style={{fontSize:12,color:T.acc}}>{inr(bomCost(b.items)+b.labor)}/unit</span>
+          <button onClick={()=>delBom(b.id)} style={{...btn(T.panel2),color:T.danger}}>✕</button>
+        </div></Card>))}
+      {boms.length===0&&<div style={{color:T.dim,fontSize:13}}>No BOMs yet. Raw materials-um finished product-um Products page-la irukanum.</div>}
+    </>}
+
+    {tab==="produce"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8}}>Production run</div>
+      <select style={inp()} value={prodBomId} onChange={e=>setProdBomId(e.target.value)}>
+        <option value="">Select BOM *</option>
+        {boms.map(b=><option key={b.id} value={b.id}>{pName(b.productId)}</option>)}
+      </select>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <input style={inp(0)} type="number" placeholder="Qty to produce *" value={prodQty} onChange={e=>setProdQty(e.target.value)}/>
+        <input style={inp(0)} type="number" placeholder="Scrap/reject qty" value={scrapQty} onChange={e=>setScrapQty(e.target.value)}/>
+      </div>
+      {prodBomId&&+prodQty>0&&(()=>{const b=boms.find(x=>x.id===prodBomId);
+        return <div style={{fontSize:12,color:T.dim,margin:"8px 0"}}>
+          Raw needed: {b.items.map(i=>`${pName(i.pid)} ×${i.qty*+prodQty}`).join(", ")}<br/>
+          Total cost: <b style={{color:T.acc}}>{inr((bomCost(b.items)+b.labor)*+prodQty)}</b></div>;})()}
+      <button onClick={produce} style={{...btn(T.acc),color:"#08221E",fontWeight:800,marginTop:6,padding:10}}>▶ Run production</button>
+    </Card>}
+
+    {tab==="runs"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8}}>Production history</div>
+      {runs.map(r=>(
+        <div key={r.id} style={{fontSize:12.5,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
+          <span style={{color:T.acc}}>{fmtTs(r.ts)}</span> · <b>{pName(r.productId)}</b> · produced {r.goodQty}
+          {r.scrap>0&&<span style={{color:T.danger}}> (scrap {r.scrap})</span>} · cost {inr(r.totalCost)} · <b style={{color:T.acc2}}>{inr(r.unitCost)}/unit</b>
+        </div>))}
+      {runs.length===0&&<div style={{color:T.dim,fontSize:13}}>No production runs yet.</div>}
     </Card>}
   </div>);
 }
