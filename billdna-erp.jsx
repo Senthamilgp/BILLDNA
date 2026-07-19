@@ -75,6 +75,12 @@ export default function BillDNA(){
     ["reports","📈 Reports",can("reports")],
     ["mfg","🏭 Manufacturing",can("inventory")],
     ["hr","👷 HR & Payroll",can("users")||can("settings")],
+    ["assets","🏗 Assets",can("settings")],
+    ["finance","🏦 Finance",can("accounting")],
+    ["store","🛍 Online Store",true],
+    ["ai","🤖 AI Assistant",can("reports")],
+    ["integrations","🔌 Export & Tools",can("settings")],
+    ["admin","⚙️ Admin Panel",can("settings")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -115,6 +121,12 @@ export default function BillDNA(){
           {view==="reports"&&<Reports {...ctx}/>}
           {view==="mfg"&&<Manufacturing {...ctx}/>}
           {view==="hr"&&<Hr {...ctx}/>}
+          {view==="assets"&&<Assets {...ctx}/>}
+          {view==="finance"&&<Finance {...ctx}/>}
+          {view==="store"&&<Store {...ctx}/>}
+          {view==="ai"&&<Ai {...ctx}/>}
+          {view==="integrations"&&<Integrations {...ctx}/>}
+          {view==="admin"&&<AdminPanel {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -1445,6 +1457,379 @@ function Hr({db,save,log,flash}){
         </Card>))}
       {payroll.length===0&&<div style={{color:T.dim,fontSize:13}}>No payroll runs yet.</div>}
     </>}
+  </div>);
+}
+
+/* ---------- Assets (P12) ---------- */
+function Assets({db,save,log,flash}){
+  const [f,setF]=useState({name:"",cost:"",date:new Date().toISOString().slice(0,10),rate:10,serviceEvery:""});
+  const assets=db.assets||[];
+  const yearsSince=d=>(Date.now()-Date.parse(d))/31557600000;
+  const curValue=a=>Math.max(0,Math.round(a.cost*(1-a.rate/100*yearsSince(a.date))));
+  const serviceDue=a=>a.serviceEvery&&(Date.now()-Date.parse(a.lastService||a.date))/86400000>=a.serviceEvery;
+  const add=()=>{
+    if(!f.name.trim()||!+f.cost)return flash("Name & cost required");
+    const d=structuredClone(db);d.assets=d.assets||[];
+    d.assets.push({id:uid(),...f,name:f.name.trim(),cost:+f.cost,rate:+f.rate,serviceEvery:+f.serviceEvery||0,lastService:f.date});
+    log(d,`Asset added: ${f.name}`);save(d);setF({name:"",cost:"",date:new Date().toISOString().slice(0,10),rate:10,serviceEvery:""});flash("Asset saved");
+  };
+  const doService=id=>{const d=structuredClone(db);
+    const a=d.assets.find(x=>x.id===id);a.lastService=new Date().toISOString().slice(0,10);
+    log(d,`Asset serviced: ${a.name}`);save(d);flash("Service recorded");};
+  return(<div>
+    <H1>Assets</H1>
+    <Card><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8}}>
+      <input style={inp(0)} placeholder="Asset name *" value={f.name} onChange={e=>setF(s=>({...s,name:e.target.value}))}/>
+      <input style={inp(0)} type="number" placeholder="Cost ₹ *" value={f.cost} onChange={e=>setF(s=>({...s,cost:e.target.value}))}/>
+      <input style={inp(0)} type="date" value={f.date} onChange={e=>setF(s=>({...s,date:e.target.value}))}/>
+      <input style={inp(0)} type="number" placeholder="Dep %/yr" value={f.rate} onChange={e=>setF(s=>({...s,rate:e.target.value}))}/>
+      <input style={inp(0)} type="number" placeholder="Service every (days)" value={f.serviceEvery} onChange={e=>setF(s=>({...s,serviceEvery:e.target.value}))}/>
+    </div>
+    <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add asset</button></Card>
+    {assets.map(a=>(
+      <Card key={a.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:150}}><b>{a.name}</b>
+          <div style={{fontSize:11,color:T.dim}}>Bought {a.date} · {inr(a.cost)} · dep {a.rate}%/yr</div></div>
+        <div style={{fontSize:13}}>Now: <b style={{color:T.acc}}>{inr(curValue(a))}</b></div>
+        {serviceDue(a)&&<span style={{fontSize:11,color:T.danger}}>🔧 Service due</span>}
+        {a.serviceEvery>0&&<button onClick={()=>doService(a.id)} style={btn(T.panel2)}>Serviced today</button>}
+      </div></Card>))}
+    {assets.length===0&&<div style={{color:T.dim,fontSize:13}}>No assets. Machines, vehicles, computers ellam add pannalam.</div>}
+  </div>);
+}
+
+/* ---------- Finance (P13) ---------- */
+function Finance({db,save,log,flash}){
+  const [tab,setTab]=useState("loans");
+  const [f,setF]=useState({name:"",principal:"",rate:"",months:""});
+  const loans=db.loans||[];
+  const emiCalc=(P,annualRate,n)=>{const r=annualRate/1200;
+    return r===0?P/n:P*r*Math.pow(1+r,n)/(Math.pow(1+r,n)-1);};
+  const addLoan=()=>{
+    if(!f.name.trim()||!+f.principal||!+f.months)return flash("Name, principal & months required");
+    const d=structuredClone(db);d.loans=d.loans||[];
+    const emi=Math.round(emiCalc(+f.principal,+f.rate||0,+f.months));
+    d.loans.push({id:uid(),...f,name:f.name.trim(),principal:+f.principal,rate:+f.rate||0,months:+f.months,emi,paid:0});
+    log(d,`Loan added: ${f.name} EMI ${inr(emi)}`);save(d);setF({name:"",principal:"",rate:"",months:""});flash(`EMI: ${inr(emi)}/month`);
+  };
+  const payEmi=id=>{const d=structuredClone(db);
+    const l=d.loans.find(x=>x.id===id);
+    if(l.paid>=l.months)return flash("Loan already closed");
+    l.paid++;
+    d.vouchers=d.vouchers||[];
+    d.vouchers.unshift({id:uid(),no:`EMI-${l.name}-${l.paid}`,ts:Date.now(),type:"Expense",account:`Loan: ${l.name}`,amt:l.emi,mode:"Bank",note:`EMI ${l.paid}/${l.months}`});
+    log(d,`EMI paid: ${l.name} ${l.paid}/${l.months}`);save(d);flash("EMI recorded in Accounting");};
+  // Bank reconciliation: bank-mode entries
+  const recon=db.recon||{};
+  const bankTxns=[
+    ...db.invoices.filter(i=>["UPI","Card"].includes(i.payMode)&&!i.returned).map(i=>({key:"inv-"+i.id,ts:i.ts,label:`${i.no} sale`,amt:i.paid,dir:"in"})),
+    ...(db.vouchers||[]).filter(v=>["Bank","UPI","Card"].includes(v.mode)).map(v=>({key:"vch-"+v.id,ts:v.ts,label:`${v.no} ${v.type}`,amt:v.amt,dir:["Receipt","Income"].includes(v.type)?"in":"out"})),
+  ].sort((a,b)=>b.ts-a.ts);
+  const toggleRecon=key=>{const d=structuredClone(db);
+    d.recon=d.recon||{};d.recon[key]=!d.recon[key];save(d);};
+  const unreconciled=bankTxns.filter(t=>!recon[t.key]).length;
+  return(<div>
+    <H1>Finance</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12}}>
+      {[["loans","Loans & EMI"],["recon",`Bank Reconciliation${unreconciled?` (${unreconciled})`:""}`]].map(([k,l])=>(
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>))}
+    </div>
+    {tab==="loans"&&<>
+      <Card><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
+        <input style={inp(0)} placeholder="Loan name *" value={f.name} onChange={e=>setF(s=>({...s,name:e.target.value}))}/>
+        <input style={inp(0)} type="number" placeholder="Principal ₹ *" value={f.principal} onChange={e=>setF(s=>({...s,principal:e.target.value}))}/>
+        <input style={inp(0)} type="number" placeholder="Interest %/yr" value={f.rate} onChange={e=>setF(s=>({...s,rate:e.target.value}))}/>
+        <input style={inp(0)} type="number" placeholder="Months *" value={f.months} onChange={e=>setF(s=>({...s,months:e.target.value}))}/>
+      </div>
+      <button onClick={addLoan} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add loan</button></Card>
+      {loans.map(l=>{
+        const outstanding=l.emi*(l.months-l.paid);
+        const totalInterest=l.emi*l.months-l.principal;
+        return(<Card key={l.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:160}}><b>{l.name}</b>
+            <div style={{fontSize:11,color:T.dim}}>{inr(l.principal)} @ {l.rate}% · {l.paid}/{l.months} EMIs · interest total {inr(Math.round(totalInterest))}</div></div>
+          <div style={{fontSize:13}}>EMI <b style={{color:T.acc}}>{inr(l.emi)}</b></div>
+          <div style={{fontSize:12,color:T.acc2}}>Balance {inr(outstanding)}</div>
+          {l.paid<l.months?<button onClick={()=>payEmi(l.id)} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Pay EMI</button>
+            :<span style={{fontSize:11,color:T.ok}}>✓ Closed</span>}
+        </div></Card>);})}
+      {loans.length===0&&<div style={{color:T.dim,fontSize:13}}>No loans tracked.</div>}
+    </>}
+    {tab==="recon"&&<Card>
+      <div style={{fontSize:12,color:T.dim,marginBottom:8}}>Bank statement-oda compare panni match aana entry-ah tick pannunga.</div>
+      {bankTxns.map(t=>(
+        <div key={t.key} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+          <input type="checkbox" checked={!!recon[t.key]} onChange={()=>toggleRecon(t.key)} style={{width:16,height:16,accentColor:T.acc}}/>
+          <span style={{color:T.acc,fontSize:11,width:100}}>{fmtTs(t.ts)}</span>
+          <span style={{flex:1,fontSize:12.5,color:recon[t.key]?T.dim:T.text}}>{t.label}</span>
+          <b style={{color:t.dir==="in"?T.ok:T.danger,fontSize:13}}>{t.dir==="in"?"+":"−"}{inr(t.amt)}</b>
+        </div>))}
+      {bankTxns.length===0&&<div style={{color:T.dim,fontSize:13}}>No bank/UPI/card transactions yet.</div>}
+    </Card>}
+  </div>);
+}
+
+/* ---------- Online Store (P14) ---------- */
+function Store({db,save,log,notify,flash,company}){
+  const [tab,setTab]=useState("shop");
+  const [cart,setCart]=useState({});
+  const [cust,setCust]=useState({name:"",phone:""});
+  const orders=db.orders||[];
+  const upiId=db.settings?.upiId||"";
+  const items=Object.entries(cart).filter(([,q])=>q>0);
+  const total=items.reduce((a,[pid,q])=>{const p=db.products.find(x=>x.id===pid);return a+(p?.price||0)*q;},0);
+  const setQ=(pid,q)=>setCart(c=>({...c,[pid]:Math.max(0,q)}));
+  const placeOrder=()=>{
+    if(items.length===0||!cust.name.trim())return flash("Items & customer name required");
+    const d=structuredClone(db);d.orders=d.orders||[];
+    const no=`ORD-${String(d.orders.length+1).padStart(4,"0")}`;
+    d.orders.unshift({id:uid(),no,ts:Date.now(),name:cust.name.trim(),phone:cust.phone,
+      items:items.map(([pid,q])=>{const p=d.products.find(x=>x.id===pid);return{pid,name:p.name,qty:q,rate:p.price};}),
+      total,status:"New"});
+    notify(d,`New online order ${no} — ${inr(total)} (${cust.name})`);
+    log(d,`Online order ${no}`);save(d);setCart({});setCust({name:"",phone:""});flash(`${no} placed!`);
+  };
+  const STAGES=["New","Packed","Shipped","Delivered"];
+  const advance=id=>{const d=structuredClone(db);
+    const o=d.orders.find(x=>x.id===id);
+    const i=STAGES.indexOf(o.status);
+    if(i<STAGES.length-1){o.status=STAGES[i+1];
+      if(o.status==="Delivered"){ // convert to invoice + stock out
+        d.seq.inv++;
+        const no=`GST-${String(d.seq.inv).padStart(4,"0")}`;
+        const sub=o.items.reduce((a,it)=>a+it.rate*it.qty,0);
+        const tax=o.items.reduce((a,it)=>{const p=d.products.find(x=>x.id===it.pid);return a+it.rate*it.qty*(p?.gst||0)/100;},0);
+        d.invoices.unshift({id:uid(),no,type:"GST Invoice",customerId:null,items:o.items.map(it=>{const p=d.products.find(x=>x.id===it.pid);return{...it,gst:p?.gst||0,hsn:p?.hsn||"",unit:p?.unit||"pcs"};}),sub,tax,total:Math.round((sub+tax)*100)/100,paid:Math.round((sub+tax)*100)/100,payMode:"UPI",ts:Date.now(),branchId:null,returned:false,orderNo:o.no});
+        o.items.forEach(it=>{const p=d.products.find(x=>x.id===it.pid);if(!p)return;
+          const wh=Object.keys(p.stock)[0]||"default";p.stock[wh]=(p.stock[wh]||0)-it.qty;
+          d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:it.pid,wh,qty:-it.qty,type:"Online sale",ref:no});});
+      }
+      log(d,`Order ${o.no} → ${o.status}`);save(d);}
+  };
+  const upiLink=o=>`upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(company?.name||"BillDNA")}&am=${o.total}&cu=INR&tn=${o.no}`;
+  return(<div>
+    <H1>Online Store</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12}}>
+      {[["shop","🛍 Shop (customer view)"],["orders",`Orders${orders.filter(o=>o.status!=="Delivered").length?` (${orders.filter(o=>o.status!=="Delivered").length})`:""}`]].map(([k,l])=>(
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>))}
+    </div>
+    {tab==="shop"&&<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10,marginBottom:12}}>
+        {db.products.filter(p=>totalStock(p)>0).map(p=>(
+          <Card key={p.id}>
+            <div style={{fontWeight:700,fontSize:13}}>{p.name}</div>
+            <div style={{fontSize:11,color:T.dim}}>{p.category||"—"}</div>
+            <div style={{color:T.acc,fontWeight:800,margin:"4px 0"}}>{inr(p.price)}<span style={{fontSize:10,color:T.dim}}>/{p.unit}</span></div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <button onClick={()=>setQ(p.id,(cart[p.id]||0)-1)} style={btn(T.panel2)}>−</button>
+              <b>{cart[p.id]||0}</b>
+              <button onClick={()=>setQ(p.id,(cart[p.id]||0)+1)} style={btn(T.panel2)}>+</button>
+            </div>
+          </Card>))}
+      </div>
+      {db.products.filter(p=>totalStock(p)>0).length===0&&<div style={{color:T.dim,fontSize:13,marginBottom:12}}>Stock-la products illa — catalog empty.</div>}
+      {total>0&&<Card>
+        <div style={{fontWeight:800,fontSize:16,color:T.acc,marginBottom:8}}>Cart total: {inr(total)}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <input style={inp(0)} placeholder="Customer name *" value={cust.name} onChange={e=>setCust(s=>({...s,name:e.target.value}))}/>
+          <input style={inp(0)} placeholder="Phone" value={cust.phone} onChange={e=>setCust(s=>({...s,phone:e.target.value}))}/>
+        </div>
+        <button onClick={placeOrder} style={{...btn(T.acc),color:"#08221E",fontWeight:800,marginTop:10,padding:10,width:"100%"}}>🛒 Place order</button>
+      </Card>}
+    </>}
+    {tab==="orders"&&<>
+      {orders.map(o=>(
+        <Card key={o.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:160}}><b>{o.no}</b> <span style={{fontSize:11,color:T.dim}}>· {o.name} · {fmtTs(o.ts)}</span>
+            <div style={{fontSize:11,color:T.dim}}>{o.items.map(i=>`${i.name}×${i.qty}`).join(", ")}</div></div>
+          <b style={{color:T.acc}}>{inr(o.total)}</b>
+          <span style={{fontSize:11,fontWeight:700,color:o.status==="Delivered"?T.ok:T.acc2}}>{o.status}</span>
+          {upiId&&o.status!=="Delivered"&&<a href={upiLink(o)} style={{...btn(T.panel2),textDecoration:"none",fontSize:11}}>UPI pay</a>}
+          {o.status!=="Delivered"&&<button onClick={()=>advance(o.id)} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>→ {STAGES[STAGES.indexOf(o.status)+1]}</button>}
+        </div></Card>))}
+      {orders.length===0&&<div style={{color:T.dim,fontSize:13}}>No online orders yet.</div>}
+      <div style={{fontSize:11,color:T.dim,marginTop:8}}>Delivered aana udane GST invoice + stock out auto-create aagum. UPI ID-ah Admin Panel-la set pannunga.</div>
+    </>}
+  </div>);
+}
+
+/* ---------- AI Assistant (P15) ---------- */
+function Ai({db,flash}){
+  const [tab,setTab]=useState("forecast");
+  const [q,setQ]=useState("");const [chat,setChat]=useState([]);const [busy,setBusy]=useState(false);
+
+  // stats last 30 days
+  const cutoff=Date.now()-30*86400000;
+  const invs=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned&&i.ts>=cutoff);
+  const perProd=useMemo(()=>{
+    const m={};
+    invs.forEach(i=>i.items.forEach(it=>{m[it.pid]=m[it.pid]||{name:it.name,qty:0};m[it.pid].qty+=it.qty;}));
+    return m;
+  },[invs]);
+  const rows=db.products.map(p=>{
+    const sold30=perProd[p.id]?.qty||0;
+    const avgDaily=sold30/30;
+    const stock=totalStock(p);
+    const daysLeft=avgDaily>0?Math.floor(stock/avgDaily):Infinity;
+    const reorder=Math.max(0,Math.ceil(avgDaily*14-stock)); // 14-day cover
+    return {p,sold30,avgDaily,stock,daysLeft,reorder};
+  });
+  const salesDaily=invs.reduce((a,i)=>a+i.total,0)/30;
+  const next7=Math.round(salesDaily*7);
+
+  const ask=async()=>{
+    if(!q.trim()||busy)return;
+    const question=q.trim();setQ("");setBusy(true);
+    setChat(c=>[...c,{role:"user",text:question}]);
+    const snapshot={
+      products:db.products.length,customers:db.customers.length,
+      sales30d:invs.reduce((a,i)=>a+i.total,0),bills30d:invs.length,
+      receivables:db.invoices.reduce((a,i)=>a+Math.max(0,i.total-i.paid),0),
+      payables:db.purchases.reduce((a,p)=>a+Math.max(0,p.total-p.paid),0),
+      lowStock:db.products.filter(p=>totalStock(p)<=(p.low||0)&&p.low>0).map(p=>p.name).slice(0,10),
+      topProducts:Object.values(perProd).sort((a,b)=>b.qty-a.qty).slice(0,5),
+    };
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,
+          messages:[{role:"user",content:`You are BillDNA AI Business Advisor for a Tamil Nadu SME. Reply in Tanglish (Tamil-English mix), short and practical, max 5 lines. Business data: ${JSON.stringify(snapshot)}\n\nQuestion: ${question}`}]})});
+      const data=await res.json();
+      const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")||"Reply varala, thirumba try pannunga.";
+      setChat(c=>[...c,{role:"ai",text}]);
+    }catch(e){setChat(c=>[...c,{role:"ai",text:"Network error — thirumba try pannunga."}]);}
+    setBusy(false);
+  };
+
+  return(<div>
+    <H1>AI Assistant</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12}}>
+      {[["forecast","📦 Inventory Forecast"],["predict","📈 Sales Prediction"],["chat","💬 Business Advisor"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>))}
+    </div>
+    {tab==="forecast"&&<Card>
+      <div style={{fontWeight:700,marginBottom:4}}>Reorder suggestions (14-day cover, 30-day sales basis)</div>
+      <div style={{display:"flex",gap:8,fontSize:11,color:T.dim,fontWeight:700,padding:"4px 0"}}>
+        <span style={{flex:1}}>Product</span><span style={{width:70,textAlign:"right"}}>Sold/30d</span><span style={{width:60,textAlign:"right"}}>Stock</span><span style={{width:70,textAlign:"right"}}>Days left</span><span style={{width:80,textAlign:"right"}}>Order qty</span></div>
+      {rows.filter(r=>r.sold30>0).sort((a,b)=>a.daysLeft-b.daysLeft).map(r=>(
+        <div key={r.p.id} style={{display:"flex",gap:8,fontSize:12.5,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+          <span style={{flex:1}}>{r.p.name}</span><span style={{width:70,textAlign:"right",color:T.dim}}>{r.sold30}</span>
+          <span style={{width:60,textAlign:"right"}}>{r.stock}</span>
+          <span style={{width:70,textAlign:"right",color:r.daysLeft<7?T.danger:r.daysLeft<15?T.acc2:T.ok}}>{r.daysLeft===Infinity?"∞":r.daysLeft}</span>
+          <b style={{width:80,textAlign:"right",color:r.reorder>0?T.acc2:T.dim}}>{r.reorder>0?r.reorder:"—"}</b></div>))}
+      {rows.every(r=>r.sold30===0)&&<div style={{color:T.dim,fontSize:13}}>30 days-la sales data illa — billing start pannunga.</div>}
+    </Card>}
+    {tab==="predict"&&<Card>
+      <div style={{fontWeight:700,marginBottom:10}}>Sales prediction (30-day moving average)</div>
+      {[["Avg daily sales",inr(Math.round(salesDaily))],["Predicted next 7 days",inr(next7)],["Predicted next 30 days",inr(Math.round(salesDaily*30))]].map(([l,v])=>(
+        <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"7px 0",borderBottom:`1px solid ${T.line}`}}>
+          <span style={{color:T.dim}}>{l}</span><b style={{color:T.acc}}>{v}</b></div>))}
+      <div style={{fontSize:11,color:T.dim,marginTop:8}}>Simple moving average — data adhigam aana accuracy improve aagum.</div>
+    </Card>}
+    {tab==="chat"&&<>
+      <Card>
+        <div style={{maxHeight:300,overflowY:"auto",marginBottom:10}}>
+          {chat.length===0&&<div style={{color:T.dim,fontSize:13}}>Business patthi kelunga — "Indha maasam profit eppadi?", "Enna stock order pannanum?", "Sales increase panna idea?"</div>}
+          {chat.map((m,i)=>(
+            <div key={i} style={{marginBottom:8,textAlign:m.role==="user"?"right":"left"}}>
+              <div style={{display:"inline-block",background:m.role==="user"?T.acc:T.panel2,color:m.role==="user"?"#08221E":T.text,padding:"8px 12px",borderRadius:10,fontSize:13,maxWidth:"85%",whiteSpace:"pre-wrap",textAlign:"left"}}>{m.text}</div>
+            </div>))}
+          {busy&&<div style={{color:T.dim,fontSize:12}}>AI yosikkuthu…</div>}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <input style={inp(0)} placeholder="Ungal business question..." value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()}/>
+          <button onClick={ask} disabled={busy} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Ask</button>
+        </div>
+      </Card>
+    </>}
+  </div>);
+}
+
+/* ---------- Integrations & Exports (P16) ---------- */
+function Integrations({db,flash,company}){
+  const csv=(rows,name)=>{
+    const esc=v=>{const s=String(v??"");return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;};
+    const txt=rows.map(r=>r.map(esc).join(",")).join("\n");
+    const blob=new Blob(["\ufeff"+txt],{type:"text/csv"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();
+    flash(`${name} downloaded`);
+  };
+  const expProducts=()=>csv([["Name","SKU","Barcode","Category","HSN","GST%","Price","Cost","Stock"],
+    ...db.products.map(p=>[p.name,p.sku,p.barcode,p.category,p.hsn,p.gst,p.price,p.cost,totalStock(p)])],"products.csv");
+  const expCustomers=()=>csv([["Name","Phone","GSTIN","City"],...db.customers.map(c=>[c.name,c.phone,c.gstin,c.city])],"customers.csv");
+  const expInvoices=()=>csv([["No","Type","Date","Customer","Subtotal","Tax","Total","Paid","Mode"],
+    ...db.invoices.map(i=>[i.no,i.type,new Date(i.ts).toLocaleDateString("en-IN"),db.customers.find(c=>c.id===i.customerId)?.name||"Walk-in",i.sub,i.tax,i.total,i.paid,i.payMode])],"invoices.csv");
+  const expTally=()=>{
+    const vch=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned).map(i=>`
+  <TALLYMESSAGE><VOUCHER VCHTYPE="Sales" ACTION="Create">
+    <DATE>${new Date(i.ts).toISOString().slice(0,10).replace(/-/g,"")}</DATE>
+    <VOUCHERNUMBER>${i.no}</VOUCHERNUMBER>
+    <PARTYLEDGERNAME>${db.customers.find(c=>c.id===i.customerId)?.name||"Cash"}</PARTYLEDGERNAME>
+    <AMOUNT>${i.total}</AMOUNT>
+  </VOUCHER></TALLYMESSAGE>`).join("");
+    const xml=`<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDATA>${vch}
+</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
+    const blob=new Blob([xml],{type:"application/xml"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="tally-sales.xml";a.click();
+    flash("Tally XML downloaded — Tally-la Import Data pannunga");
+  };
+  return(<div>
+    <H1>Export & Tools</H1>
+    <Card><div style={{fontWeight:700,marginBottom:8}}>Excel / CSV Export</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button onClick={expProducts} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Products CSV</button>
+        <button onClick={expCustomers} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Customers CSV</button>
+        <button onClick={expInvoices} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Invoices CSV</button>
+      </div>
+      <div style={{fontSize:11,color:T.dim,marginTop:6}}>Excel/Google Sheets-la direct open aagum.</div></Card>
+    <Card><div style={{fontWeight:700,marginBottom:8}}>Tally Export</div>
+      <button onClick={expTally} style={{...btn(T.acc2),color:"#08221E",fontWeight:700}}>Sales vouchers → Tally XML</button></Card>
+    <Card><div style={{fontWeight:700,marginBottom:8}}>Print / PDF</div>
+      <button onClick={()=>window.print()} style={{...btn(T.panel2)}}>🖨 Print current page (browser PDF save)</button>
+      <div style={{fontSize:11,color:T.dim,marginTop:6}}>Thermal printer: browser print dialog-la 80mm paper size select pannunga.</div></Card>
+    <Card><div style={{fontWeight:700,marginBottom:4}}>Already integrated</div>
+      <div style={{fontSize:12.5,color:T.dim}}>✓ WhatsApp invoice & payment reminders (CRM, POS) · ✓ UPI deep-link payments (Store) · ✓ Barcode scan-to-bill (POS search) · ✓ GSTR JSON export (GST Reports) · ✓ JSON full backup (Backup)</div></Card>
+  </div>);
+}
+
+/* ---------- Admin Panel (P18) ---------- */
+function AdminPanel({db,save,log,flash,session}){
+  const s=db.settings||{};
+  const [f,setF]=useState({upiId:s.upiId||"",workingDays:s.workingDays||26,invPrefix:s.invPrefix||""});
+  const saveSettings=()=>{
+    const d=structuredClone(db);
+    d.settings={...d.settings,upiId:f.upiId.trim(),workingDays:+f.workingDays||26,invPrefix:f.invPrefix.trim()};
+    log(d,"Settings updated");save(d);flash("Settings saved");
+  };
+  const stats=[
+    ["Companies",db.companies.length],["Branches",db.companies.reduce((a,c)=>a+c.branches.length,0)],
+    ["Users",db.users.length],["Products",db.products.length],
+    ["Customers",db.customers.length],["Invoices",db.invoices.length],
+    ["Purchases",db.purchases.length],["Online orders",(db.orders||[]).length],
+    ["Employees",(db.employees||[]).length],["Assets",(db.assets||[]).length],
+  ];
+  const dataSize=Math.round(JSON.stringify(db).length/1024);
+  return(<div>
+    <H1>Admin Panel</H1>
+    <Card><div style={{display:"flex",alignItems:"center",gap:10}}>
+      <div style={{flex:1}}><div style={{fontWeight:800,fontSize:15}}>BillDNA <span style={{color:T.acc}}>Pro</span></div>
+        <div style={{fontSize:11,color:T.dim}}>All 18 phases unlocked · Single-device edition · Data: {dataSize} KB</div></div>
+      <span style={{fontSize:11,color:T.ok,fontWeight:700}}>● Active</span></div></Card>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:12}}>
+      {stats.map(([l,v])=><Card key={l}><div style={{fontSize:20,fontWeight:800,color:T.acc}}>{v}</div><div style={{fontSize:11,color:T.dim}}>{l}</div></Card>)}
+    </div>
+    <Card><div style={{fontWeight:700,marginBottom:8}}>System settings</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8}}>
+        <div><div style={{fontSize:11,color:T.dim,marginBottom:3}}>UPI ID (Store payments)</div>
+          <input style={inp(0)} placeholder="yourname@upi" value={f.upiId} onChange={e=>setF(x=>({...x,upiId:e.target.value}))}/></div>
+        <div><div style={{fontSize:11,color:T.dim,marginBottom:3}}>Working days/month (Payroll)</div>
+          <input style={inp(0)} type="number" value={f.workingDays} onChange={e=>setF(x=>({...x,workingDays:e.target.value}))}/></div>
+        <div><div style={{fontSize:11,color:T.dim,marginBottom:3}}>Invoice prefix (optional)</div>
+          <input style={inp(0)} placeholder="e.g. SD" value={f.invPrefix} onChange={e=>setF(x=>({...x,invPrefix:e.target.value}))}/></div>
+      </div>
+      <button onClick={saveSettings} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Save settings</button></Card>
+    <Card><div style={{fontWeight:700,marginBottom:4}}>Audit</div>
+      <div style={{fontSize:12.5,color:T.dim}}>Full activity trail Activity Log page-la irukku · Backup & Restore page-la data safety · User roles Users page-la manage pannalam.</div></Card>
   </div>);
 }
 
