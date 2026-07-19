@@ -71,6 +71,7 @@ export default function BillDNA(){
     ["inventory","🏬 Inventory",can("inventory")],
     ["accounting","📒 Accounting",can("accounting")],
     ["gst","🧾 GST Reports",can("accounting")||can("reports")],
+    ["crm","🤝 CRM",can("billing")||can("masters")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -107,6 +108,7 @@ export default function BillDNA(){
           {view==="inventory"&&<Inventory {...ctx}/>}
           {view==="accounting"&&<Accounting {...ctx}/>}
           {view==="gst"&&<GstReports {...ctx}/>}
+          {view==="crm"&&<Crm {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -915,6 +917,111 @@ function GstReports({db,company,flash}){
         <span style={{width:70}}>Total</span><span style={{flex:1,textAlign:"right"}}>{inr(totTaxable)}</span>
         <span style={{width:90,textAlign:"right",color:T.acc}}>{inr(totCgst)}</span><span style={{width:90,textAlign:"right",color:T.acc}}>{inr(totSgst)}</span></div>
     </Card>}
+  </div>);
+}
+
+/* ---------- CRM (P8) ---------- */
+function Crm({db,save,log,flash}){
+  const [tab,setTab]=useState("credit");
+  const [selCust,setSelCust]=useState("");
+  const [fu,setFu]=useState({customerId:"",note:"",due:""});
+
+  const custInvs=id=>db.invoices.filter(i=>i.customerId===id&&!i.returned);
+  const due=id=>custInvs(id).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
+  const spent=id=>custInvs(id).filter(i=>i.type.includes("Invoice")).reduce((a,i)=>a+i.total,0);
+  const points=id=>Math.floor(spent(id)/100); // 1 point per ₹100
+
+  const waRemind=c=>{
+    const amt=due(c.id);
+    return `https://wa.me/91${(c.phone||"").replace(/\D/g,"").slice(-10)}?text=${encodeURIComponent(`Vanakkam ${c.name},\nUngal pending balance: ${inr(amt)}.\nPayment seekiram settle panna request. Nandri! 🙏\n— BillDNA`)}`;
+  };
+
+  const addFu=()=>{
+    if(!fu.customerId||!fu.note.trim())return flash("Customer & note required");
+    const d=structuredClone(db);d.followups=d.followups||[];
+    d.followups.unshift({id:uid(),ts:Date.now(),...fu,note:fu.note.trim(),done:false});
+    log(d,`Follow-up added: ${d.customers.find(c=>c.id===fu.customerId)?.name}`);
+    save(d);setFu({customerId:"",note:"",due:""});flash("Follow-up saved");
+  };
+  const toggleFu=id=>{const d=structuredClone(db);
+    const f=d.followups.find(x=>x.id===id);f.done=!f.done;save(d);};
+
+  const debtors=db.customers.filter(c=>due(c.id)>0).sort((a,b)=>due(b.id)-due(a.id));
+  const followups=(db.followups||[]).sort((a,b)=>(a.done-b.done)||(Date.parse(a.due||"2099")-Date.parse(b.due||"2099")));
+  const cName=id=>db.customers.find(c=>c.id===id)?.name||"—";
+  const overdue=f=>!f.done&&f.due&&Date.parse(f.due)<Date.now();
+
+  const TABS=[["credit","Credit & Reminders"],["history","Customer History"],["followup","Follow-ups"],["loyalty","Loyalty"]];
+  return(<div>
+    <H1>CRM</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>)}
+    </div>
+
+    {tab==="credit"&&<>
+      {debtors.length===0&&<Card><div style={{color:T.ok,fontSize:13}}>✓ No pending customer dues. Super!</div></Card>}
+      {debtors.map(c=>(
+        <Card key={c.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:150}}><b>{c.name}</b>
+            <div style={{fontSize:11,color:T.dim}}>{c.phone||"no phone"} · {custInvs(c.id).filter(i=>i.paid<i.total).length} pending bills</div></div>
+          <b style={{color:T.acc2}}>{inr(due(c.id))}</b>
+          {c.phone&&<a href={waRemind(c)} target="_blank" rel="noreferrer" style={{...btn(T.ok),color:"#08221E",fontWeight:700,textDecoration:"none"}}>📲 Remind</a>}
+        </div></Card>))}
+    </>}
+
+    {tab==="history"&&<>
+      <select style={inp()} value={selCust} onChange={e=>setSelCust(e.target.value)}>
+        <option value="">Select customer</option>
+        {db.customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      {selCust&&<>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:12}}>
+          <Card><div style={{fontSize:18,fontWeight:800,color:T.acc}}>{inr(spent(selCust))}</div><div style={{fontSize:11,color:T.dim}}>Total business</div></Card>
+          <Card><div style={{fontSize:18,fontWeight:800,color:T.acc2}}>{inr(due(selCust))}</div><div style={{fontSize:11,color:T.dim}}>Pending due</div></Card>
+          <Card><div style={{fontSize:18,fontWeight:800,color:T.ok}}>{points(selCust)}</div><div style={{fontSize:11,color:T.dim}}>Loyalty points</div></Card>
+        </div>
+        {custInvs(selCust).map(i=>(
+          <Card key={i.id}><div style={{display:"flex",gap:10,alignItems:"center"}}>
+            <div style={{flex:1}}><b>{i.no}</b> <span style={{fontSize:11,color:T.dim}}>· {i.type} · {fmtTs(i.ts)} · {i.items.length} items</span></div>
+            <b>{inr(i.total)}</b>
+            <span style={{fontSize:11,color:i.paid>=i.total?T.ok:T.acc2}}>{i.paid>=i.total?"Paid":`Due ${inr(i.total-i.paid)}`}</span>
+          </div></Card>))}
+        {custInvs(selCust).length===0&&<div style={{color:T.dim,fontSize:13}}>No bills yet for this customer.</div>}
+      </>}
+    </>}
+
+    {tab==="followup"&&<>
+      <Card>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 130px",gap:8}}>
+          <select style={inp(0)} value={fu.customerId} onChange={e=>setFu(s=>({...s,customerId:e.target.value}))}>
+            <option value="">Customer *</option>
+            {db.customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <input style={inp(0)} placeholder="Note (e.g. call about new order) *" value={fu.note} onChange={e=>setFu(s=>({...s,note:e.target.value}))}/>
+          <input style={inp(0)} type="date" value={fu.due} onChange={e=>setFu(s=>({...s,due:e.target.value}))}/>
+        </div>
+        <button onClick={addFu} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add follow-up</button>
+      </Card>
+      {followups.map(f=>(
+        <Card key={f.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+          <input type="checkbox" checked={f.done} onChange={()=>toggleFu(f.id)} style={{width:16,height:16,accentColor:T.acc}}/>
+          <div style={{flex:1,textDecoration:f.done?"line-through":"none",color:f.done?T.dim:T.text,fontSize:13}}>
+            <b>{cName(f.customerId)}</b> — {f.note}
+            {f.due&&<span style={{fontSize:11,color:overdue(f)?T.danger:T.dim}}> · due {f.due}{overdue(f)?" ⚠ OVERDUE":""}</span>}
+          </div>
+        </div></Card>))}
+      {followups.length===0&&<div style={{color:T.dim,fontSize:13}}>No follow-ups. Add one above.</div>}
+    </>}
+
+    {tab==="loyalty"&&<>
+      <Card><div style={{fontSize:12,color:T.dim}}>Rule: ₹100 business = 1 point. Redeem manually (e.g. 100 points = ₹50 off) — discount-ah POS rate-la adjust pannunga.</div></Card>
+      {db.customers.map(c=>({c,p:points(c.id)})).filter(x=>x.p>0).sort((a,b)=>b.p-a.p).map(({c,p})=>(
+        <Card key={c.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}><b>{c.name}</b> <span style={{fontSize:11,color:T.dim}}>· {inr(spent(c.id))} lifetime</span></div>
+          <b style={{color:T.acc}}>⭐ {p} pts</b>
+        </div></Card>))}
+      {db.customers.every(c=>points(c.id)===0)&&<div style={{color:T.dim,fontSize:13}}>No loyalty points yet — billing start aanadhum points accumulate aagum.</div>}
+    </>}
   </div>);
 }
 
