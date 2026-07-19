@@ -74,6 +74,7 @@ export default function BillDNA(){
     ["crm","🤝 CRM",can("billing")||can("masters")],
     ["reports","📈 Reports",can("reports")],
     ["mfg","🏭 Manufacturing",can("inventory")],
+    ["hr","👷 HR & Payroll",can("users")||can("settings")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -113,6 +114,7 @@ export default function BillDNA(){
           {view==="crm"&&<Crm {...ctx}/>}
           {view==="reports"&&<Reports {...ctx}/>}
           {view==="mfg"&&<Manufacturing {...ctx}/>}
+          {view==="hr"&&<Hr {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -1307,6 +1309,142 @@ function Manufacturing({db,save,log,notify,flash}){
         </div>))}
       {runs.length===0&&<div style={{color:T.dim,fontSize:13}}>No production runs yet.</div>}
     </Card>}
+  </div>);
+}
+
+/* ---------- HR & Payroll (P11) ---------- */
+function Hr({db,save,log,flash}){
+  const [tab,setTab]=useState("emp");
+  const [f,setF]=useState({name:"",phone:"",role:"",salary:""});
+  const [attDate,setAttDate]=useState(new Date().toISOString().slice(0,10));
+  const [payMonth,setPayMonth]=useState(new Date().toISOString().slice(0,7));
+  const [inc,setInc]=useState({});
+
+  const emps=db.employees||[];
+  const att=db.attendance||{}; // {"2026-07-19":{empId:"P|A|H"}}
+  const payroll=db.payrollRuns||[];
+
+  const addEmp=()=>{
+    if(!f.name.trim()||!+f.salary)return flash("Name & monthly salary required");
+    const d=structuredClone(db);d.employees=d.employees||[];
+    d.employees.push({id:uid(),...f,name:f.name.trim(),salary:+f.salary,active:true});
+    log(d,`Employee added: ${f.name}`);save(d);setF({name:"",phone:"",role:"",salary:""});flash("Employee added");
+  };
+  const toggleEmp=id=>{const d=structuredClone(db);
+    const e=d.employees.find(x=>x.id===id);e.active=!e.active;
+    log(d,`Employee ${e.active?"activated":"deactivated"}: ${e.name}`);save(d);};
+
+  const mark=(empId,status)=>{
+    const d=structuredClone(db);d.attendance=d.attendance||{};
+    d.attendance[attDate]=d.attendance[attDate]||{};
+    d.attendance[attDate][empId]=status;
+    save(d);
+  };
+
+  // month stats
+  const monthDays=Object.keys(att).filter(k=>k.startsWith(payMonth));
+  const stat=empId=>{
+    let p=0,a=0,h=0;
+    monthDays.forEach(day=>{const s=att[day]?.[empId];
+      if(s==="P")p++;else if(s==="A")a++;else if(s==="H")h++;});
+    return {p,a,h,payable:p+h*0.5};
+  };
+  const workingDays=26; // standard
+  const calcSalary=(e,incentive)=>{
+    const s=stat(e.id);
+    const base=e.salary*Math.min(1,s.payable/workingDays);
+    return Math.round(base+(+incentive||0));
+  };
+
+  const runPayroll=()=>{
+    const d=structuredClone(db);
+    d.payrollRuns=d.payrollRuns||[];
+    if(d.payrollRuns.some(r=>r.month===payMonth))return flash("Payroll already run for this month");
+    const rows=(d.employees||[]).filter(e=>e.active).map(e=>{
+      const s=stat(e.id);
+      const incentive=+inc[e.id]||0;
+      return {empId:e.id,name:e.name,base:e.salary,present:s.p,half:s.h,absent:s.a,incentive,net:calcSalary(e,incentive)};
+    });
+    const total=rows.reduce((a,r)=>a+r.net,0);
+    d.payrollRuns.unshift({id:uid(),ts:Date.now(),month:payMonth,rows,total});
+    // record as expense voucher
+    d.vouchers=d.vouchers||[];
+    d.vouchers.unshift({id:uid(),no:`SAL-${payMonth}`,ts:Date.now(),type:"Expense",account:"Salaries",amt:total,mode:"Cash",note:`Payroll ${payMonth}`});
+    log(d,`Payroll run ${payMonth} — ${inr(total)}`);
+    save(d);setInc({});flash(`Payroll saved · ${inr(total)} (Accounting-la expense auto-entry)`);
+  };
+
+  const TABS=[["emp","Employees"],["att","Attendance"],["pay","Payroll"],["hist","History"]];
+  return(<div>
+    <H1>HR & Payroll</H1>
+    <div style={{display:"flex",gap:6,marginBottom:12}}>
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
+    </div>
+
+    {tab==="emp"&&<>
+      <Card><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8}}>
+        <input style={inp(0)} placeholder="Name *" value={f.name} onChange={e=>setF(s=>({...s,name:e.target.value}))}/>
+        <input style={inp(0)} placeholder="Phone" value={f.phone} onChange={e=>setF(s=>({...s,phone:e.target.value}))}/>
+        <input style={inp(0)} placeholder="Role (e.g. Sales)" value={f.role} onChange={e=>setF(s=>({...s,role:e.target.value}))}/>
+        <input style={inp(0)} type="number" placeholder="Monthly salary ₹ *" value={f.salary} onChange={e=>setF(s=>({...s,salary:e.target.value}))}/>
+      </div>
+      <button onClick={addEmp} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add employee</button></Card>
+      {emps.map(e=>(
+        <Card key={e.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}><b>{e.name}</b> <span style={{fontSize:11,color:T.dim}}>· {e.role||"—"} · {e.phone||"—"}</span></div>
+          <span style={{fontSize:12,color:T.acc}}>{inr(e.salary)}/mo</span>
+          <span style={{fontSize:11,color:e.active?T.ok:T.danger}}>{e.active?"Active":"Left"}</span>
+          <button onClick={()=>toggleEmp(e.id)} style={btn(T.panel2)}>{e.active?"Mark left":"Rejoin"}</button>
+        </div></Card>))}
+      {emps.length===0&&<div style={{color:T.dim,fontSize:13}}>No employees yet.</div>}
+    </>}
+
+    {tab==="att"&&<>
+      <input type="date" style={{...inp(),maxWidth:180}} value={attDate} onChange={e=>setAttDate(e.target.value)}/>
+      {emps.filter(e=>e.active).map(e=>{
+        const cur=att[attDate]?.[e.id];
+        return(<Card key={e.id}><div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{flex:1,fontSize:13}}><b>{e.name}</b></div>
+          {[["P","Present",T.ok],["H","Half-day",T.acc2],["A","Absent",T.danger]].map(([s,l,c])=>(
+            <button key={s} onClick={()=>mark(e.id,s)}
+              style={{...btn(cur===s?c:T.panel2),color:cur===s?"#08221E":T.text,fontWeight:cur===s?800:400}}>{l}</button>))}
+        </div></Card>);})}
+      {emps.filter(e=>e.active).length===0&&<div style={{color:T.dim,fontSize:13}}>Active employees illa.</div>}
+    </>}
+
+    {tab==="pay"&&<>
+      <Card>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+          <div style={{fontWeight:700,flex:1}}>Payroll · {payMonth}</div>
+          <input type="month" style={{...inp(0),width:150}} value={payMonth} onChange={e=>setPayMonth(e.target.value)}/>
+        </div>
+        <div style={{fontSize:11,color:T.dim,marginBottom:8}}>Formula: salary × (present + half×0.5) / {workingDays} working days + incentive. Attendance mark pannala-na 0 varum.</div>
+        {emps.filter(e=>e.active).map(e=>{
+          const s=stat(e.id);
+          return(<div key={e.id} style={{display:"flex",gap:8,alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.line}`,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:120,fontSize:13}}><b>{e.name}</b>
+              <div style={{fontSize:10,color:T.dim}}>P:{s.p} H:{s.h} A:{s.a} · base {inr(e.salary)}</div></div>
+            <input style={{...inp(0),width:100}} type="number" placeholder="Incentive"
+              value={inc[e.id]||""} onChange={ev=>setInc(m=>({...m,[e.id]:ev.target.value}))}/>
+            <b style={{width:90,textAlign:"right",color:T.acc}}>{inr(calcSalary(e,inc[e.id]))}</b>
+          </div>);})}
+        <div style={{display:"flex",justifyContent:"space-between",fontWeight:800,margin:"10px 0",fontSize:15}}>
+          <span>Total payout</span>
+          <span style={{color:T.acc}}>{inr(emps.filter(e=>e.active).reduce((a,e)=>a+calcSalary(e,inc[e.id]),0))}</span></div>
+        <button onClick={runPayroll} style={{...btn(T.acc),color:"#08221E",fontWeight:800,padding:10,width:"100%"}}>💰 Run payroll & save</button>
+      </Card>
+    </>}
+
+    {tab==="hist"&&<>
+      {payroll.map(r=>(
+        <Card key={r.id}>
+          <div style={{fontWeight:700,marginBottom:6}}>{r.month} · Total {inr(r.total)} <span style={{fontSize:11,color:T.dim}}>· {fmtTs(r.ts)}</span></div>
+          {r.rows.map(row=><div key={row.empId} style={{fontSize:12,color:T.dim,display:"flex",padding:"3px 0"}}>
+            <span style={{flex:1}}>{row.name} (P:{row.present} H:{row.half} A:{row.absent}{row.incentive?` +inc ${inr(row.incentive)}`:""})</span>
+            <b style={{color:T.text}}>{inr(row.net)}</b></div>)}
+        </Card>))}
+      {payroll.length===0&&<div style={{color:T.dim,fontSize:13}}>No payroll runs yet.</div>}
+    </>}
   </div>);
 }
 
