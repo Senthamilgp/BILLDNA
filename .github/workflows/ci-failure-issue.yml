@@ -1,0 +1,30 @@
+name: CI Failure → Auto Issue
+on:
+  workflow_run:
+    workflows: ["BillDNA CI"]
+    types: [completed]
+jobs:
+  open-fix-issue:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: `CI failed: run #${context.payload.workflow_run.run_number} on ${context.payload.workflow_run.head_branch}`,
+              body: [
+                `CI failed at commit ${context.payload.workflow_run.head_sha.slice(0,7)}.`,
+                `Logs: ${context.payload.workflow_run.html_url}`,
+                ``,
+                `@claude please auto-fix:`,
+                `1. npm ci, then build: npx esbuild billdna-erp.jsx --loader:.jsx=jsx --bundle --format=esm --external:react --external:react-dom --outfile=out-esm.js`,
+                `2. Run all suites: for f in tests/phase*.mjs; do node $f; done && node pos-flow-test.mjs && node tests/shadow-verification.mjs && node tests/perf.mjs`,
+                `3. Read the failing CI logs above, find root cause, fix the CODE (only change a test if the test itself is provably wrong — never weaken assertions).`,
+                `4. Re-run everything until all pass, then open a PR to main describing root cause + fix.`
+              ].join('\n'),
+              labels: ['ci-failure','autofix']
+            });
