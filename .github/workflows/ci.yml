@@ -1,0 +1,25 @@
+name: BillDNA CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npx esbuild billdna-erp.jsx --loader:.jsx=jsx --bundle --format=esm --external:react --external:react-dom --outfile=out-esm.js
+      - name: Unit suites (103 tests)
+        run: for f in tests/phase*.mjs; do echo "== $f"; node $f; done
+      - name: E2E smoke (POS flow)
+        run: node pos-flow-test.mjs
+      - name: Shadow verification (42 tests)
+        run: node tests/shadow-verification.mjs
+      - name: Performance benchmark
+        run: node tests/perf.mjs

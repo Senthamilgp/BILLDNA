@@ -1,5 +1,7 @@
 # BillDNA — SME ERP
 
+![CI](https://github.com/Senthamilgp/BILLDNA/actions/workflows/ci.yml/badge.svg)
+
 Full ERP for Indian small businesses. GST billing, inventory, accounting, POS, reports.
 
 ## Build plan (18 phases, frozen one by one)
