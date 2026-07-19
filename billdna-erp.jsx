@@ -72,6 +72,7 @@ export default function BillDNA(){
     ["accounting","📒 Accounting",can("accounting")],
     ["gst","🧾 GST Reports",can("accounting")||can("reports")],
     ["crm","🤝 CRM",can("billing")||can("masters")],
+    ["reports","📈 Reports",can("reports")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -109,6 +110,7 @@ export default function BillDNA(){
           {view==="accounting"&&<Accounting {...ctx}/>}
           {view==="gst"&&<GstReports {...ctx}/>}
           {view==="crm"&&<Crm {...ctx}/>}
+          {view==="reports"&&<Reports {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -1022,6 +1024,151 @@ function Crm({db,save,log,flash}){
         </div></Card>))}
       {db.customers.every(c=>points(c.id)===0)&&<div style={{color:T.dim,fontSize:13}}>No loyalty points yet — billing start aanadhum points accumulate aagum.</div>}
     </>}
+  </div>);
+}
+
+/* ---------- Reports (P9) ---------- */
+function Reports({db}){
+  const [tab,setTab]=useState("sales");
+  const [days,setDays]=useState(30);
+  const cutoff=Date.now()-days*86400000;
+  const invs=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned&&i.ts>=cutoff);
+
+  // Daily sales
+  const daily=useMemo(()=>{
+    const m={};
+    invs.forEach(i=>{const k=new Date(i.ts).toLocaleDateString("en-IN");m[k]=(m[k]||0)+i.total;});
+    return Object.entries(m).slice(0,31);
+  },[invs]);
+
+  // Product-wise sales + profit
+  const prodStats=useMemo(()=>{
+    const m={};
+    invs.forEach(i=>i.items.forEach(it=>{
+      const p=db.products.find(x=>x.id===it.pid);
+      m[it.pid]=m[it.pid]||{name:it.name,qty:0,revenue:0,profit:0,lastSold:0};
+      m[it.pid].qty+=it.qty;
+      m[it.pid].revenue+=it.rate*it.qty;
+      m[it.pid].profit+=(it.rate-(p?.cost||0))*it.qty;
+      m[it.pid].lastSold=Math.max(m[it.pid].lastSold,i.ts);
+    }));
+    return Object.entries(m).map(([pid,v])=>({pid,...v}));
+  },[invs,db.products]);
+
+  const byQty=[...prodStats].sort((a,b)=>b.qty-a.qty);
+  const fast=byQty.slice(0,10);
+  const slow=byQty.filter(p=>p.qty>0).slice(-10).reverse();
+  const soldPids=new Set(prodStats.map(p=>p.pid));
+  const dead=db.products.filter(p=>!soldPids.has(p.id)&&totalStock(p)>0);
+
+  // ABC analysis (by revenue: A=70%, B=next 20%, C=rest)
+  const abc=useMemo(()=>{
+    const sorted=[...prodStats].sort((a,b)=>b.revenue-a.revenue);
+    const tot=sorted.reduce((a,p)=>a+p.revenue,0)||1;
+    let cum=0;
+    return sorted.map(p=>{cum+=p.revenue;const pct=cum/tot;
+      return {...p,cls:pct<=0.7?"A":pct<=0.9?"B":"C"};});
+  },[prodStats]);
+
+  // Outstanding
+  const custDue=db.customers.map(c=>({name:c.name,
+    due:db.invoices.filter(i=>i.customerId===c.id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0)}))
+    .filter(x=>x.due>0).sort((a,b)=>b.due-a.due);
+  const supDue=db.suppliers.map(s=>({name:s.name,
+    due:db.purchases.filter(p=>p.supplierId===s.id).reduce((a,p)=>a+Math.max(0,p.total-p.paid),0)}))
+    .filter(x=>x.due>0).sort((a,b)=>b.due-a.due);
+
+  // Expense summary
+  const expByAcct=useMemo(()=>{
+    const m={};
+    (db.vouchers||[]).filter(v=>["Expense","Payment"].includes(v.type)&&v.ts>=cutoff)
+      .forEach(v=>{m[v.account]=(m[v.account]||0)+v.amt;});
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  },[db.vouchers,cutoff]);
+
+  const totRev=invs.reduce((a,i)=>a+i.total,0);
+  const totProfit=prodStats.reduce((a,p)=>a+p.profit,0);
+  const totExp=expByAcct.reduce((a,[,v])=>a+v,0);
+
+  const TABS=[["sales","Sales"],["products","Product Sales"],["fastslow","Fast / Slow"],["dead","Dead Stock"],["abc","ABC"],["outstanding","Outstanding"],["expense","Expenses"],["profit","Profit"]];
+  const Bar=({label,val,max,color=T.acc})=>(
+    <div style={{marginBottom:6}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12}}><span style={{color:T.dim}}>{label}</span><b>{inr(val)}</b></div>
+      <div style={{background:T.panel2,borderRadius:4,height:8}}><div style={{background:color,width:`${Math.min(100,val/max*100)}%`,height:8,borderRadius:4}}/></div>
+    </div>);
+
+  return(<div>
+    <H1>Reports</H1>
+    <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12}}>{l}</button>)}
+      <select style={{...inp(0),width:110,marginLeft:"auto"}} value={days} onChange={e=>setDays(+e.target.value)}>
+        {[[7,"7 days"],[30,"30 days"],[90,"90 days"],[365,"1 year"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+      </select>
+    </div>
+
+    {tab==="sales"&&<Card>
+      <div style={{fontWeight:700,marginBottom:4}}>Daily sales · last {days} days · Total: <span style={{color:T.acc}}>{inr(totRev)}</span> · {invs.length} bills</div>
+      {daily.map(([d,v])=><Bar key={d} label={d} val={v} max={Math.max(...daily.map(x=>x[1]),1)}/>)}
+      {daily.length===0&&<div style={{color:T.dim,fontSize:13}}>No sales in this period.</div>}
+    </Card>}
+
+    {tab==="products"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8}}>Product-wise sales</div>
+      {byQty.map(p=><div key={p.pid} style={{display:"flex",gap:8,fontSize:12.5,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+        <span style={{flex:1}}>{p.name}</span><span style={{width:60,textAlign:"right",color:T.dim}}>{p.qty} sold</span>
+        <span style={{width:90,textAlign:"right"}}>{inr(p.revenue)}</span>
+        <span style={{width:90,textAlign:"right",color:p.profit>=0?T.ok:T.danger}}>{inr(p.profit)}</span></div>)}
+      {byQty.length===0&&<div style={{color:T.dim,fontSize:13}}>No sales yet.</div>}
+    </Card>}
+
+    {tab==="fastslow"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <Card><div style={{fontWeight:700,marginBottom:8,color:T.ok}}>🔥 Fast moving (top 10)</div>
+        {fast.map(p=><div key={p.pid} style={{fontSize:12.5,padding:"4px 0",display:"flex"}}><span style={{flex:1}}>{p.name}</span><b>{p.qty}</b></div>)}
+        {fast.length===0&&<div style={{color:T.dim,fontSize:12}}>—</div>}</Card>
+      <Card><div style={{fontWeight:700,marginBottom:8,color:T.acc2}}>🐢 Slow moving (bottom 10)</div>
+        {slow.map(p=><div key={p.pid} style={{fontSize:12.5,padding:"4px 0",display:"flex"}}><span style={{flex:1}}>{p.name}</span><b>{p.qty}</b></div>)}
+        {slow.length===0&&<div style={{color:T.dim,fontSize:12}}>—</div>}</Card>
+    </div>}
+
+    {tab==="dead"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8,color:T.danger}}>💀 Dead stock (stock irukku, {days} days-la oru sale-um illa)</div>
+      {dead.map(p=><div key={p.id} style={{fontSize:12.5,padding:"4px 0",display:"flex"}}>
+        <span style={{flex:1}}>{p.name}</span><span style={{color:T.dim}}>{totalStock(p)} {p.unit} · value {inr(totalStock(p)*(p.cost||0))}</span></div>)}
+      {dead.length===0&&<div style={{color:T.ok,fontSize:13}}>✓ No dead stock. Super!</div>}
+    </Card>}
+
+    {tab==="abc"&&<Card>
+      <div style={{fontWeight:700,marginBottom:4}}>ABC Analysis (revenue-wise)</div>
+      <div style={{fontSize:11,color:T.dim,marginBottom:8}}>A = top 70% revenue (focus items) · B = next 20% · C = last 10%</div>
+      {abc.map(p=><div key={p.pid} style={{display:"flex",gap:8,fontSize:12.5,padding:"4px 0",borderBottom:`1px solid ${T.line}`}}>
+        <b style={{width:24,color:p.cls==="A"?T.ok:p.cls==="B"?T.acc2:T.dim}}>{p.cls}</b>
+        <span style={{flex:1}}>{p.name}</span><span>{inr(p.revenue)}</span></div>)}
+      {abc.length===0&&<div style={{color:T.dim,fontSize:13}}>No sales data.</div>}
+    </Card>}
+
+    {tab==="outstanding"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <Card><div style={{fontWeight:700,marginBottom:8,color:T.acc2}}>Receivables (customers)</div>
+        {custDue.map(c=><div key={c.name} style={{fontSize:12.5,padding:"4px 0",display:"flex"}}><span style={{flex:1}}>{c.name}</span><b>{inr(c.due)}</b></div>)}
+        {custDue.length===0&&<div style={{color:T.ok,fontSize:12}}>✓ Nil</div>}</Card>
+      <Card><div style={{fontWeight:700,marginBottom:8,color:T.danger}}>Payables (suppliers)</div>
+        {supDue.map(s=><div key={s.name} style={{fontSize:12.5,padding:"4px 0",display:"flex"}}><span style={{flex:1}}>{s.name}</span><b>{inr(s.due)}</b></div>)}
+        {supDue.length===0&&<div style={{color:T.ok,fontSize:12}}>✓ Nil</div>}</Card>
+    </div>}
+
+    {tab==="expense"&&<Card>
+      <div style={{fontWeight:700,marginBottom:8}}>Expenses · last {days} days · Total: <span style={{color:T.danger}}>{inr(totExp)}</span></div>
+      {expByAcct.map(([a,v])=><Bar key={a} label={a} val={v} max={Math.max(...expByAcct.map(x=>x[1]),1)} color={T.danger}/>)}
+      {expByAcct.length===0&&<div style={{color:T.dim,fontSize:13}}>No expenses recorded (Accounting → Vouchers-la add pannunga).</div>}
+    </Card>}
+
+    {tab==="profit"&&<Card>
+      <div style={{fontWeight:700,marginBottom:10}}>Profit summary · last {days} days</div>
+      {[["Revenue (incl. GST)",totRev,T.text],["Gross profit (sales − cost)",totProfit,T.ok],
+        ["Expenses",-totExp,T.danger],["Net (gross − expenses)",totProfit-totExp,totProfit-totExp>=0?T.ok:T.danger]].map(([l,v,c])=>(
+        <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"7px 0",fontWeight:l.includes("Net")?800:400,color:c,borderBottom:`1px solid ${T.line}`}}>
+          <span>{l}</span><span>{inr(Math.abs(v))}{v<0?" (−)":""}</span></div>))}
+      <div style={{fontSize:11,color:T.dim,marginTop:8}}>Note: Gross profit product cost basis-la — cost update pannala-na 0 cost assume aagum.</div>
+    </Card>}
   </div>);
 }
 
