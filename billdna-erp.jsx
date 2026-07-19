@@ -24,7 +24,7 @@ const seed=()=>({
   users:[{id:"u1",name:"Admin",email:"admin@billdna.in",pin:"1234",role:"Owner",active:true}],
   companies:[],activeCompanyId:null,activeBranchId:null,
   customers:[],suppliers:[],products:[],warehouses:[],
-  invoices:[],purchases:[],payments:[],stockMoves:[],
+  invoices:[],purchases:[],payments:[],stockMoves:[],vouchers:[],
   seq:{inv:0,pur:0},
   notifications:[{id:"n1",msg:"Welcome to BillDNA ERP (Phases 1–5).",ts:Date.now(),read:false}],
   logs:[{id:"l1",ts:Date.now(),user:"System",action:"System initialized"}],
@@ -69,6 +69,7 @@ export default function BillDNA(){
     ["invoices","📄 Invoices",can("billing")],
     ["purchase","📦 Purchase",can("purchase")],
     ["inventory","🏬 Inventory",can("inventory")],
+    ["accounting","📒 Accounting",can("accounting")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["suppliers","🚚 Suppliers",can("masters")],
@@ -103,6 +104,7 @@ export default function BillDNA(){
           {view==="invoices"&&<Invoices {...ctx}/>}
           {view==="purchase"&&<Purchase {...ctx}/>}
           {view==="inventory"&&<Inventory {...ctx}/>}
+          {view==="accounting"&&<Accounting {...ctx}/>}
           {view==="products"&&<Products {...ctx}/>}
           {view==="customers"&&<Parties {...ctx} kind="customers" title="Customers"/>}
           {view==="suppliers"&&<Parties {...ctx} kind="suppliers" title="Suppliers"/>}
@@ -635,6 +637,149 @@ function Backup({db,save,log,flash}){
       <button onClick={restore} style={{...btn(T.danger),color:"#fff",fontWeight:700,marginTop:8}}>Restore data</button></Card>
   </div>);
 }
+
+/* ---------- Accounting (P6) ---------- */
+function Accounting({db,save,log,flash}){
+  const [tab,setTab]=useState("daybook");
+  const [f,setF]=useState({type:"Expense",account:"",amt:"",mode:"Cash",note:""});
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+  const vouchers=db.vouchers||[];
+
+  // unified transaction stream: invoices(in), purchases(out), vouchers
+  const txns=useMemo(()=>{
+    const t=[];
+    db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned).forEach(i=>t.push({ts:i.ts,ref:i.no,acct:custName(db,i.customerId),desc:"Sale",amt:i.paid,mode:i.payMode==="Credit"?"Credit":i.payMode,dir:"in",full:i.total}));
+    db.purchases.forEach(p=>t.push({ts:p.ts,ref:p.no,acct:supName(db,p.supplierId),desc:"Purchase",amt:p.paid,mode:"Cash",dir:"out",full:p.total}));
+    vouchers.forEach(v=>t.push({ts:v.ts,ref:v.no,acct:v.account,desc:v.type,amt:v.amt,mode:v.mode,dir:["Receipt","Income"].includes(v.type)?"in":v.type==="Contra"?"contra":"out"}));
+    return t.sort((a,b)=>b.ts-a.ts);
+  },[db]);
+
+  const addVoucher=()=>{
+    if(!f.account.trim()||!+f.amt)return flash("Account & amount required");
+    const d=structuredClone(db);d.vouchers=d.vouchers||[];
+    const no=`${f.type.slice(0,3).toUpperCase()}-${String(d.vouchers.length+1).padStart(4,"0")}`;
+    d.vouchers.unshift({id:uid(),no,ts:Date.now(),...f,amt:+f.amt,account:f.account.trim()});
+    log(d,`${f.type} voucher ${no} — ${inr(+f.amt)}`);
+    save(d);setF({type:"Expense",account:"",amt:"",mode:"Cash",note:""});flash(`${no} saved`);
+  };
+
+  // P&L
+  const sales=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned);
+  const revenue=sales.reduce((a,i)=>a+i.sub,0);
+  const cogs=sales.reduce((a,i)=>a+i.items.reduce((x,it)=>{const p=db.products.find(z=>z.id===it.pid);return x+(p?.cost||0)*it.qty;},0),0);
+  const expenses=vouchers.filter(v=>["Expense","Payment"].includes(v.type)).reduce((a,v)=>a+v.amt,0);
+  const otherInc=vouchers.filter(v=>["Income","Receipt"].includes(v.type)).reduce((a,v)=>a+v.amt,0);
+  const gross=revenue-cogs, net=gross-expenses+otherInc;
+
+  // Balance sheet (simplified)
+  const receivables=db.invoices.reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
+  const payables=db.purchases.reduce((a,p)=>a+Math.max(0,p.total-p.paid),0);
+  const stockValue=db.products.reduce((a,p)=>a+totalStock(p)*(p.cost||0),0);
+  const cashIn=txns.filter(t=>t.dir==="in"&&t.mode==="Cash").reduce((a,t)=>a+t.amt,0);
+  const cashOut=txns.filter(t=>t.dir==="out"&&t.mode==="Cash").reduce((a,t)=>a+t.amt,0);
+  const bankIn=txns.filter(t=>t.dir==="in"&&["UPI","Card","Bank"].includes(t.mode)).reduce((a,t)=>a+t.amt,0);
+  const bankOut=txns.filter(t=>t.dir==="out"&&["UPI","Card","Bank"].includes(t.mode)).reduce((a,t)=>a+t.amt,0);
+  const cashBal=cashIn-cashOut, bankBal=bankIn-bankOut;
+
+  const today=new Date().toDateString();
+  const book=(mode)=>txns.filter(t=>t.dir!=="contra"&&(mode==="Cash"?t.mode==="Cash":["UPI","Card","Bank"].includes(t.mode)));
+
+  const Row=({t})=>(
+    <div style={{display:"flex",gap:8,fontSize:12,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+      <span style={{color:T.acc,width:100}}>{fmtTs(t.ts)}</span>
+      <span style={{width:80}}>{t.ref}</span>
+      <span style={{flex:1,color:T.dim}}>{t.acct} · {t.desc}</span>
+      <span style={{width:60,fontSize:10,color:T.dim}}>{t.mode}</span>
+      <b style={{width:90,textAlign:"right",color:t.dir==="in"?T.ok:t.dir==="contra"?T.acc2:T.danger}}>{t.dir==="in"?"+":t.dir==="contra"?"⇄":"−"}{inr(t.amt)}</b>
+    </div>);
+
+  const TABS=[["daybook","Day Book"],["cash","Cash Book"],["bank","Bank Book"],["voucher","Vouchers"],["ledger","Ledger"],["pl","P&L"],["bs","Balance Sheet"],["tb","Trial Balance"],["cf","Cash Flow"]];
+  const [ledgerAcct,setLedgerAcct]=useState("");
+  const accts=[...new Set(txns.map(t=>t.acct))];
+
+  return(<div>
+    <H1>Accounting</H1>
+    <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap"}}>
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12}}>{l}</button>)}
+    </div>
+
+    {tab==="daybook"&&<Card><div style={{fontWeight:700,marginBottom:8}}>Today's transactions</div>
+      {txns.filter(t=>new Date(t.ts).toDateString()===today).map((t,i)=><Row key={i} t={t}/>)}
+      {txns.filter(t=>new Date(t.ts).toDateString()===today).length===0&&<div style={{color:T.dim,fontSize:13}}>No transactions today.</div>}</Card>}
+
+    {tab==="cash"&&<Card><div style={{fontWeight:700,marginBottom:4}}>Cash Book · Balance: <span style={{color:cashBal>=0?T.ok:T.danger}}>{inr(cashBal)}</span></div>
+      {book("Cash").map((t,i)=><Row key={i} t={t}/>)}</Card>}
+
+    {tab==="bank"&&<Card><div style={{fontWeight:700,marginBottom:4}}>Bank Book (UPI/Card) · Balance: <span style={{color:bankBal>=0?T.ok:T.danger}}>{inr(bankBal)}</span></div>
+      {book("Bank").map((t,i)=><Row key={i} t={t}/>)}</Card>}
+
+    {tab==="voucher"&&<><Card>
+      <div style={{fontWeight:700,marginBottom:8}}>New voucher</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
+        <select style={inp(0)} value={f.type} onChange={e=>set("type",e.target.value)}>
+          {["Expense","Income","Payment","Receipt","Journal","Contra"].map(t=><option key={t}>{t}</option>)}</select>
+        <input style={inp(0)} placeholder="Account / party *" value={f.account} onChange={e=>set("account",e.target.value)}/>
+        <input style={inp(0)} type="number" placeholder="Amount *" value={f.amt} onChange={e=>set("amt",e.target.value)}/>
+        <select style={inp(0)} value={f.mode} onChange={e=>set("mode",e.target.value)}>{["Cash","Bank","UPI","Card"].map(m=><option key={m}>{m}</option>)}</select>
+        <input style={inp(0)} placeholder="Note" value={f.note} onChange={e=>set("note",e.target.value)}/>
+      </div>
+      <button onClick={addVoucher} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Save voucher</button></Card>
+      {vouchers.map(v=><Card key={v.id}><div style={{display:"flex",gap:10,alignItems:"center"}}>
+        <div style={{flex:1}}><b>{v.no}</b> <span style={{fontSize:11,color:T.dim}}>· {v.type} · {v.account} · {fmtTs(v.ts)}</span>
+          {v.note&&<div style={{fontSize:11,color:T.dim}}>{v.note}</div>}</div>
+        <b style={{color:["Receipt","Income"].includes(v.type)?T.ok:T.danger}}>{inr(v.amt)}</b>
+        <span style={{fontSize:10,color:T.dim}}>{v.mode}</span></div></Card>)}</>}
+
+    {tab==="ledger"&&<Card>
+      <select style={inp()} value={ledgerAcct} onChange={e=>setLedgerAcct(e.target.value)}>
+        <option value="">Select account</option>{accts.map(a=><option key={a}>{a}</option>)}</select>
+      {ledgerAcct&&txns.filter(t=>t.acct===ledgerAcct).map((t,i)=><Row key={i} t={t}/>)}
+      {ledgerAcct&&<div style={{fontWeight:700,marginTop:8,textAlign:"right"}}>Net: {inr(txns.filter(t=>t.acct===ledgerAcct).reduce((a,t)=>a+(t.dir==="in"?t.amt:t.dir==="out"?-t.amt:0),0))}</div>}
+    </Card>}
+
+    {tab==="pl"&&<Card>
+      <div style={{fontWeight:700,marginBottom:10}}>Profit & Loss</div>
+      {[["Revenue (net sales, excl. GST)",revenue],["Less: Cost of goods sold",-cogs],["Gross Profit",gross],
+        ["Less: Expenses",-expenses],["Add: Other income",otherInc],["Net Profit",net]].map(([l,v],i)=>(
+        <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"6px 0",
+          borderBottom:`1px solid ${T.line}`,fontWeight:l.includes("Profit")?800:400,
+          color:l.includes("Profit")?(v>=0?T.ok:T.danger):T.text}}>
+          <span>{l}</span><span>{inr(Math.abs(v))}{v<0?" (−)":""}</span></div>))}
+    </Card>}
+
+    {tab==="bs"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <Card><div style={{fontWeight:700,marginBottom:8,color:T.ok}}>Assets</div>
+        {[["Cash in hand",cashBal],["Bank balance",bankBal],["Receivables",receivables],["Stock value (at cost)",stockValue]].map(([l,v])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"5px 0"}}><span style={{color:T.dim}}>{l}</span><span>{inr(v)}</span></div>))}
+        <div style={{fontWeight:800,display:"flex",justifyContent:"space-between",borderTop:`1px solid ${T.line}`,paddingTop:6}}><span>Total</span><span>{inr(cashBal+bankBal+receivables+stockValue)}</span></div></Card>
+      <Card><div style={{fontWeight:700,marginBottom:8,color:T.danger}}>Liabilities & Equity</div>
+        {[["Payables",payables],["Retained earnings (net profit)",net]].map(([l,v])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"5px 0"}}><span style={{color:T.dim}}>{l}</span><span>{inr(v)}</span></div>))}
+        <div style={{fontWeight:800,display:"flex",justifyContent:"space-between",borderTop:`1px solid ${T.line}`,paddingTop:6}}><span>Total</span><span>{inr(payables+net)}</span></div></Card>
+    </div>}
+
+    {tab==="tb"&&<Card><div style={{fontWeight:700,marginBottom:8}}>Trial Balance</div>
+      <div style={{display:"flex",fontSize:11,color:T.dim,fontWeight:700,padding:"4px 0"}}><span style={{flex:1}}>Account</span><span style={{width:100,textAlign:"right"}}>Debit</span><span style={{width:100,textAlign:"right"}}>Credit</span></div>
+      {[["Cash",Math.max(cashBal,0),Math.max(-cashBal,0)],["Bank",Math.max(bankBal,0),Math.max(-bankBal,0)],
+        ["Receivables",receivables,0],["Stock",stockValue,0],["COGS",cogs,0],["Expenses",expenses,0],
+        ["Sales",0,revenue],["Other income",0,otherInc],["Payables",0,payables]].map(([l,dr,cr])=>(
+        <div key={l} style={{display:"flex",fontSize:13,padding:"5px 0",borderBottom:`1px solid ${T.line}`}}>
+          <span style={{flex:1,color:T.dim}}>{l}</span>
+          <span style={{width:100,textAlign:"right"}}>{dr?inr(dr):"—"}</span>
+          <span style={{width:100,textAlign:"right"}}>{cr?inr(cr):"—"}</span></div>))}
+    </Card>}
+
+    {tab==="cf"&&<Card><div style={{fontWeight:700,marginBottom:8}}>Cash Flow</div>
+      {[["Total inflow",txns.filter(t=>t.dir==="in").reduce((a,t)=>a+t.amt,0),T.ok],
+        ["Total outflow",txns.filter(t=>t.dir==="out").reduce((a,t)=>a+t.amt,0),T.danger],
+        ["Net flow",txns.reduce((a,t)=>a+(t.dir==="in"?t.amt:t.dir==="out"?-t.amt:0),0),T.acc]].map(([l,v,c])=>(
+        <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"7px 0",fontWeight:l==="Net flow"?800:400,color:c}}>
+          <span>{l}</span><span>{inr(v)}</span></div>))}
+    </Card>}
+  </div>);
+}
+const custName=(db,id)=>db.customers.find(c=>c.id===id)?.name||"Walk-in";
+const supName=(db,id)=>db.suppliers.find(s=>s.id===id)?.name||"—";
 
 /* ---------- UI primitives ---------- */
 const H1=({children})=><div style={{fontSize:20,fontWeight:800,marginBottom:12}}>{children}</div>;
