@@ -10,7 +10,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
    Storage: window.storage key "billdna_erp_v2" (migrates from v1)
    ============================================================ */
 
-const T = { bg:"#0E1420", panel:"#161E2E", panel2:"#1C2638", line:"#26324A", text:"#E8EDF6", dim:"#8A97AD", acc:"#2FB7A4", acc2:"#F5B841", danger:"#E5604C", ok:"#4CC97A" };
+import * as XLSX from "xlsx";
+const T = { bg:"#F3F5F9", panel:"#FFFFFF", panel2:"#EEF2F7", line:"#E1E7EF", text:"#1B2437", dim:"#68738B", acc:"#12A990", acc2:"#E8960C", danger:"#D9483B", ok:"#1D9E5F" };
 const PERMS = ["billing","purchase","inventory","accounting","reports","masters","settings","users"];
 const ROLE_PRESETS = { Owner:PERMS, Manager:["billing","purchase","inventory","reports","masters"], Cashier:["billing"], Accountant:["accounting","reports"] };
 const GST_RATES = [0,5,12,18,28];
@@ -33,7 +34,7 @@ const seed=()=>({
 export default function BillDNA(){
   const [db,setDb]=useState(null);
   const [session,setSession]=useState(null);
-  const [view,setView]=useState("dashboard");
+  const [view,setView]=useState("home");
   const [toast,setToast]=useState(null);
   const [narrow,setNarrow]=useState(typeof window!=="undefined"&&window.innerWidth<720);
   useEffect(()=>{const on=()=>setNarrow(window.innerWidth<720);window.addEventListener("resize",on);return()=>window.removeEventListener("resize",on);},[]);
@@ -65,33 +66,42 @@ export default function BillDNA(){
   const can=p=>session.role==="Owner"||(ROLE_PRESETS[session.role]||[]).includes(p);
   const lowStock=db.products.filter(p=>totalStock(p)<=(p.low??0)&&p.low>0);
 
+  const showAll=!!db.settings?.showAll;
   const NAV=[
-    ["dashboard","📊 Dashboard",true],
+    ["home","🏠 Home",true],
     ["pos","🧾 POS Billing",can("billing")],
     ["invoices","📄 Invoices",can("billing")],
     ["purchase","📦 Purchase",can("purchase")],
-    ["inventory","🏬 Inventory",can("inventory")],
-    ["accounting","📒 Accounting",can("accounting")],
-    ["gst","🧾 GST Reports",can("accounting")||can("reports")],
-    ["crm","🤝 CRM",can("billing")||can("masters")],
-    ["reports","📈 Reports",can("reports")],
-    ["mfg","🏭 Manufacturing",can("inventory")],
-    ["hr","👷 HR & Payroll",can("users")||can("settings")],
-    ["assets","🏗 Assets",can("settings")],
-    ["finance","🏦 Finance",can("accounting")],
-    ["store","🛍 Online Store",true],
-    ["ai","🤖 AI Assistant",can("reports")],
-    ["integrations","🔌 Export & Tools",can("settings")],
-    ["admin","⚙️ Admin Panel",can("settings")],
+    ["qexp","💸 Expense",can("billing")||can("accounting")],
+    ["qsal","👷 Daily Salary",can("billing")||can("settings")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
-    ["suppliers","🚚 Suppliers",can("masters")],
-    ["companies","🏢 Companies",can("settings")],
-    ["users","🔐 Users & Roles",can("users")],
-    ["notifications",`🔔 Alerts${unread?` (${unread})`:""}`,true],
-    ["logs","📜 Activity Log",can("settings")],
+    ["reports","📈 Reports",can("reports")],
+    ["gst","🧾 GST Reports",can("accounting")||can("reports")],
+    ["companies","🏢 Setup",can("settings")],
     ["backup","💾 Backup",can("settings")],
+    ...(showAll?[
+      ["dashboard","📊 Dashboard",true],
+      ["inventory","🏬 Inventory",can("inventory")],
+      ["accounting","📒 Accounting",can("accounting")],
+      ["crm","🤝 CRM",can("billing")||can("masters")],
+      ["mfg","🏭 Manufacturing",can("inventory")],
+      ["hr","👷 HR & Payroll",can("users")||can("settings")],
+      ["assets","🏗 Assets",can("settings")],
+      ["finance","🏦 Finance",can("accounting")],
+      ["store","🛍 Online Store",true],
+      ["ai","🤖 AI Assistant",can("reports")],
+      ["integrations","🔌 Export & Tools",can("settings")],
+      ["admin","⚙️ Admin Panel",can("settings")],
+      ["suppliers","🚚 Suppliers",can("masters")],
+      ["users","🔐 Users & Roles",can("users")],
+      ["notifications",`🔔 Alerts${unread?` (${unread})`:""}`,true],
+      ["logs","📜 Activity Log",can("settings")],
+    ]:[]),
   ];
+  const toggleAll=()=>{const d=structuredClone(db);
+    d.settings={...d.settings,showAll:!showAll};
+    log(d,`All features ${!showAll?"shown":"hidden"}`);save(d);};
 
   const ctx={db,save,log,notify,flash,session,company,branch,can};
 
@@ -105,13 +115,21 @@ export default function BillDNA(){
         <button onClick={()=>setSession(null)} style={btn(T.panel2)}>Logout</button>
       </div>
       <div style={{display:"flex",flex:1,minHeight:0}}>
-        <div style={{width:190,borderRight:`1px solid ${T.line}`,padding:10,display:"flex",flexDirection:"column",gap:3,background:T.panel,overflowY:"auto"}}>
+        {!narrow&&<div style={{width:200,borderRight:`1px solid ${T.line}`,padding:10,display:"flex",flexDirection:"column",gap:3,background:T.panel,overflowY:"auto"}}>
           {NAV.filter(n=>n[2]).map(([k,label])=>(
-            <button key={k} onClick={()=>setView(k)} style={{...btn(view===k?T.acc:"transparent"),color:view===k?"#08221E":T.text,textAlign:"left",fontWeight:view===k?700:400,fontSize:12.5}}>{label}</button>
+            <button key={k} onClick={()=>setView(k)} style={{...btn(view===k?T.acc:"transparent"),color:view===k?"#fff":T.text,textAlign:"left",fontWeight:view===k?700:500,fontSize:12.5}}>{label}</button>
           ))}
-          {!narrow&&<div style={{marginTop:"auto",fontSize:10,color:T.dim,padding:6}}>v1.0 · 18 phases</div>}
-        </div>
-        <div style={{flex:1,overflow:"auto",padding:18}}>
+          <div style={{marginTop:"auto"}}>
+            <button onClick={toggleAll} style={{...btn(T.panel2),width:"100%",fontSize:11,color:T.dim}}>{showAll?"🔒 Simple mode":"🔓 All features"}</button>
+            <div style={{fontSize:10,color:T.dim,padding:6}}>v2.0 · light</div>
+          </div>
+        </div>}
+        <div style={{flex:1,overflow:"auto",padding:narrow?"14px 12px 78px":18}}>
+          {view==="home"&&<HomeHub {...ctx} setView={setView}/>}
+          {view==="qexp"&&<QuickEntry {...ctx} kind="Expense"/>}
+          {view==="qrcpt"&&<QuickEntry {...ctx} kind="Receipt"/>}
+          {view==="qsal"&&<QuickEntry {...ctx} kind="Salary"/>}
+          {view==="more"&&<MoreGrid nav={NAV} setView={setView} showAll={showAll} toggleAll={toggleAll}/>}
           {view==="dashboard"&&<Dashboard {...ctx} lowStock={lowStock}/>}
           {view==="pos"&&<POS {...ctx}/>}
           {view==="invoices"&&<Invoices {...ctx}/>}
@@ -139,7 +157,13 @@ export default function BillDNA(){
           {view==="backup"&&<Backup {...ctx}/>}
         </div>
       </div>
-      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:T.acc,color:"#08221E",padding:"8px 18px",borderRadius:8,fontWeight:700,fontSize:13,zIndex:99}}>{toast}</div>}
+      {narrow&&<div style={{position:"fixed",bottom:0,left:0,right:0,display:"flex",background:T.panel,borderTop:`1px solid ${T.line}`,zIndex:50}}>
+        {[["home","🏠","Home"],["pos","🧾","Bill"],["purchase","📦","Purchase"],["reports","📈","Reports"],["more","⋯","More"]].map(([k,ic,l])=>(
+          <button key={k} onClick={()=>setView(k)} style={{flex:1,background:"transparent",border:"none",padding:"8px 0 10px",cursor:"pointer",color:view===k?T.acc:T.dim,fontWeight:view===k?800:500}}>
+            <div style={{fontSize:20}}>{ic}</div><div style={{fontSize:10}}>{l}</div>
+          </button>))}
+      </div>}
+      {toast&&<div style={{position:"fixed",bottom:narrow?64:20,left:"50%",transform:"translateX(-50%)",background:T.acc,color:"#fff",padding:"8px 18px",borderRadius:8,fontWeight:700,fontSize:13,zIndex:99}}>{toast}</div>}
     </div>
   );
 }
@@ -154,7 +178,7 @@ function Login({db,onLogin}){
   return(<div style={{background:T.bg,minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"system-ui"}}>
     <div style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:28,width:320}}>
       <div style={{fontWeight:800,fontSize:26,color:T.text,marginBottom:4}}>Bill<span style={{color:T.acc}}>DNA</span></div>
-      <div style={{color:T.dim,fontSize:12,marginBottom:18}}>SME ERP · Phases 1–5</div>
+      <div style={{color:T.dim,fontSize:12,marginBottom:18}}>SME ERP · Billing made simple</div>
       <input style={inp()} placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/>
       <input style={inp()} placeholder="PIN" type="password" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
       {err&&<div style={{color:T.danger,fontSize:12,marginBottom:8}}>{err}</div>}
@@ -382,8 +406,12 @@ function Invoices({db,save,log,flash}){
       d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:it.pid,wh,qty:it.qty,type:"Sales Return",ref:i.no});});
     log(d,`Sales return: ${i.no}`);save(d);flash("Return processed, stock restored");};
   const custName=id=>db.customers.find(c=>c.id===id)?.name||"Walk-in";
+  const exportXls=()=>xls([["No","Type","Date","Customer","Subtotal","Tax","Total","Paid","Mode"],
+    ...list.map(i=>[i.no,i.type,new Date(i.ts).toLocaleDateString("en-IN"),custName(i.customerId),i.sub,i.tax,i.total,i.paid,i.payMode])],"invoices.xlsx");
   return(<div>
-    <H1>Invoices</H1>
+    <div style={{display:"flex",alignItems:"center",gap:8}}><H1>Invoices</H1>
+      <button onClick={exportXls} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginLeft:"auto"}}>⬇ Excel</button>
+      <button onClick={()=>window.print()} style={btn(T.panel2)}>🖨 PDF</button></div>
     <select style={{...inp(),maxWidth:220}} value={filter} onChange={e=>setFilter(e.target.value)}>
       <option>All</option>{INV_TYPES.map(t=><option key={t}>{t}</option>)}
     </select>
@@ -886,6 +914,8 @@ function GstReports({db,company,flash}){
     <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
       {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
       <input type="month" style={{...inp(0),width:150,marginLeft:"auto"}} value={month} onChange={e=>setMonth(e.target.value)}/>
+      <button onClick={()=>xls([["Rate %","Taxable","CGST","SGST"],...Object.entries(rateWise).map(([r,v])=>[r,v.taxable,v.cgst,v.sgst]),[],["HSN","Qty","Taxable","GST %","Tax"],...Object.entries(hsn).map(([k,v])=>[k,v.qty,v.taxable,v.gst,v.tax])],`gst-${month}.xlsx`)} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ Excel</button>
+      <button onClick={()=>window.print()} style={btn(T.panel2)}>🖨 PDF</button>
     </div>
     {!company?.gstin&&<Card><div style={{color:T.acc2,fontSize:13}}>⚠ Company GSTIN set pannala — Companies page-la add pannunga. Reports work aagum, but filing-ku GSTIN venum.</div></Card>}
 
@@ -1127,6 +1157,8 @@ function Reports({db}){
       <select style={{...inp(0),width:110,marginLeft:"auto"}} value={days} onChange={e=>setDays(+e.target.value)}>
         {[[7,"7 days"],[30,"30 days"],[90,"90 days"],[365,"1 year"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
       </select>
+      <button onClick={()=>xls([["Product","Qty sold","Revenue","Profit"],...byQty.map(p=>[p.name,p.qty,p.revenue,p.profit])],`report-${days}d.xlsx`)} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ Excel</button>
+      <button onClick={()=>window.print()} style={btn(T.panel2)}>🖨 PDF</button>
     </div>
 
     {tab==="sales"&&<Card>
@@ -1840,6 +1872,123 @@ function AdminPanel({db,save,log,flash,session}){
       <div style={{fontSize:12.5,color:T.dim}}>Full activity trail Activity Log page-la irukku · Backup & Restore page-la data safety · User roles Users page-la manage pannalam.</div></Card>
   </div>);
 }
+
+/* ---------- Home Hub (v2 front page) ---------- */
+async function askClaude(db,question){
+  const cutoff=Date.now()-30*86400000;
+  const invs=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned&&i.ts>=cutoff);
+  const snapshot={sales30d:invs.reduce((a,i)=>a+i.total,0),bills30d:invs.length,
+    receivables:db.invoices.reduce((a,i)=>a+Math.max(0,i.total-i.paid),0),
+    lowStock:db.products.filter(p=>totalStock(p)<=(p.low||0)&&p.low>0).map(p=>p.name).slice(0,8)};
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,
+      messages:[{role:"user",content:`You are BillDNA AI advisor for an Indian small business. Reply short, practical, max 4 lines, simple English. Data: ${JSON.stringify(snapshot)}\n\nQuestion: ${question}`}]})});
+  const data=await res.json();
+  return (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")||"No reply, try again.";
+}
+function HomeHub({db,setView,session}){
+  const [q,setQ]=useState("");const [ans,setAns]=useState("");const [busy,setBusy]=useState(false);
+  const today=new Date().toDateString();
+  const todayInvs=db.invoices.filter(i=>new Date(i.ts).toDateString()===today&&i.type.includes("Invoice")&&!i.returned);
+  const todaySales=todayInvs.reduce((a,i)=>a+i.total,0);
+  const receivables=db.invoices.reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
+  // AI auto-suggestions (rule-based, instant)
+  const cutoff=Date.now()-30*86400000;
+  const sold={};db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned&&i.ts>=cutoff)
+    .forEach(i=>i.items.forEach(it=>{sold[it.pid]=(sold[it.pid]||0)+it.qty;}));
+  const sugg=[];
+  db.products.forEach(p=>{const s30=sold[p.id]||0;if(s30>0){
+    const days=Math.floor(totalStock(p)/(s30/30));
+    if(days<7)sugg.push(`⚠ ${p.name} — ${days} days stock dhaan. Order ${Math.ceil(s30/30*14-totalStock(p))} units.`);}});
+  const lowS=db.products.filter(p=>totalStock(p)<=(p.low||0)&&p.low>0);
+  if(lowS.length)sugg.push(`📦 ${lowS.length} items low stock: ${lowS.slice(0,3).map(p=>p.name).join(", ")}`);
+  const topDebtor=db.customers.map(c=>({c,due:db.invoices.filter(i=>i.customerId===c.id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0)})).sort((a,b)=>b.due-a.due)[0];
+  if(topDebtor&&topDebtor.due>0)sugg.push(`💰 ${topDebtor.c.name} — ${inr(topDebtor.due)} pending. Reminder anuppunga.`);
+  if(sugg.length===0)sugg.push("✅ Ellam nalla irukku. Billing start pannunga!");
+  const ask=async()=>{if(!q.trim()||busy)return;setBusy(true);setAns("");
+    try{setAns(await askClaude(db,q.trim()));}catch{setAns("Network error — try again.");}
+    setBusy(false);};
+  const ACTIONS=[["pos","🧾","New Bill",T.acc],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]];
+  return(<div>
+    <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
+      <div><div style={{fontSize:13,color:T.dim}}>Vanakkam, {session.name}</div>
+        <div style={{fontSize:22,fontWeight:800}}>Today: <span style={{color:T.acc}}>{inr(todaySales)}</span> <span style={{fontSize:12,color:T.dim,fontWeight:500}}>· {todayInvs.length} bills · Due {inr(receivables)}</span></div></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(96px,1fr))",gap:10,marginBottom:14}}>
+      {ACTIONS.map(([k,ic,l,c])=>(
+        <button key={k} onClick={()=>setView(k)} style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:"16px 8px",cursor:"pointer",boxShadow:"0 1px 3px rgba(20,30,60,.06)"}}>
+          <div style={{fontSize:26}}>{ic}</div>
+          <div style={{fontSize:12.5,fontWeight:700,color:c,marginTop:4}}>{l}</div>
+        </button>))}
+    </div>
+    <Card>
+      <div style={{fontWeight:800,marginBottom:8}}>🤖 AI Suggestions</div>
+      {sugg.slice(0,4).map((s,i)=><div key={i} style={{fontSize:13,padding:"5px 0",borderBottom:i<Math.min(sugg.length,4)-1?`1px solid ${T.line}`:"none"}}>{s}</div>)}
+    </Card>
+    <Card>
+      <div style={{fontWeight:800,marginBottom:8}}>💬 Ask AI</div>
+      <div style={{display:"flex",gap:8}}>
+        <input style={inp(0)} placeholder="Business question kelunga..." value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()}/>
+        <button onClick={ask} disabled={busy} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>{busy?"...":"Ask"}</button>
+      </div>
+      {ans&&<div style={{marginTop:10,background:T.panel2,borderRadius:10,padding:12,fontSize:13,whiteSpace:"pre-wrap"}}>{ans}</div>}
+    </Card>
+  </div>);
+}
+/* ---------- Quick Entry: Expense / Receipt / Daily Salary ---------- */
+function QuickEntry({db,save,log,flash,kind}){
+  const cfg={Expense:{title:"💸 Expense Entry",acctPh:"Expense name (Rent, Tea, EB...)",vtype:"Expense"},
+    Receipt:{title:"🧾 Receipt (Payment In)",acctPh:"From (customer/party name)",vtype:"Receipt"},
+    Salary:{title:"👷 Daily Salary / Wage",acctPh:"Worker name",vtype:"Expense"}}[kind];
+  const [f,setF]=useState({account:"",amt:"",mode:"Cash",note:""});
+  const vouchers=(db.vouchers||[]).filter(v=>kind==="Salary"?v.account.startsWith("Daily Wage:"):v.type===cfg.vtype&&!v.account.startsWith("Daily Wage:")).slice(0,10);
+  const saveIt=()=>{
+    if(!f.account.trim()||!(+f.amt>0))return flash("Name & amount required");
+    const d=structuredClone(db);d.vouchers=d.vouchers||[];
+    const account=kind==="Salary"?`Daily Wage: ${f.account.trim()}`:f.account.trim();
+    const no=`${cfg.vtype.slice(0,3).toUpperCase()}-${String(d.vouchers.length+1).padStart(4,"0")}`;
+    d.vouchers.unshift({id:uid(),no,ts:Date.now(),type:cfg.vtype,account,amt:+f.amt,mode:f.mode,note:f.note.trim()});
+    log(d,`${kind}: ${account} ${inr(+f.amt)}`);
+    save(d);setF({account:"",amt:"",mode:"Cash",note:""});flash(`${inr(+f.amt)} saved`);
+  };
+  return(<div>
+    <H1>{cfg.title}</H1>
+    <Card>
+      <input style={inp()} placeholder={cfg.acctPh+" *"} value={f.account} onChange={e=>setF(s=>({...s,account:e.target.value}))}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 130px",gap:8}}>
+        <input style={inp(0)} type="number" placeholder="Amount ₹ *" value={f.amt} onChange={e=>setF(s=>({...s,amt:e.target.value}))}/>
+        <select style={inp(0)} value={f.mode} onChange={e=>setF(s=>({...s,mode:e.target.value}))}>{["Cash","UPI","Bank","Card"].map(m=><option key={m}>{m}</option>)}</select>
+      </div>
+      <input style={inp()} placeholder="Note (optional)" value={f.note} onChange={e=>setF(s=>({...s,note:e.target.value}))}/>
+      <button onClick={saveIt} style={{...btn(T.acc),color:"#fff",fontWeight:800,width:"100%",padding:11}}>💾 Save {kind}</button>
+    </Card>
+    <div style={{fontWeight:700,margin:"12px 0 8px",fontSize:14}}>Recent</div>
+    {vouchers.map(v=>(
+      <Card key={v.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1,fontSize:13}}><b>{v.account.replace("Daily Wage: ","")}</b>
+          <div style={{fontSize:11,color:T.dim}}>{fmtTs(v.ts)} · {v.mode}{v.note?` · ${v.note}`:""}</div></div>
+        <b style={{color:kind==="Receipt"?T.ok:T.danger}}>{inr(v.amt)}</b>
+      </div></Card>))}
+    {vouchers.length===0&&<div style={{color:T.dim,fontSize:13}}>No entries yet.</div>}
+  </div>);
+}
+/* ---------- More grid (mobile) ---------- */
+function MoreGrid({nav,setView,showAll,toggleAll}){
+  const skip=new Set(["home","pos","purchase","reports"]);
+  return(<div>
+    <H1>More</H1>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:10}}>
+      {nav.filter(n=>n[2]&&!skip.has(n[0])).map(([k,label])=>(
+        <button key={k} onClick={()=>setView(k)} style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:12,padding:"14px 6px",cursor:"pointer",fontSize:12,fontWeight:600,color:T.text}}>{label}</button>))}
+    </div>
+    <button onClick={toggleAll} style={{...btn(T.panel2),width:"100%",marginTop:14,fontSize:12,color:T.dim}}>{showAll?"🔒 Simple mode":"🔓 All features (advanced)"}</button>
+  </div>);
+}
+/* ---------- Excel export helper ---------- */
+const xls=(rows,name)=>{const ws=XLSX.utils.aoa_to_sheet(rows);
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Sheet1");
+  XLSX.writeFile(wb,name);};
 
 /* ---------- UI primitives ---------- */
 const H1=({children})=><div style={{fontSize:20,fontWeight:800,marginBottom:12}}>{children}</div>;

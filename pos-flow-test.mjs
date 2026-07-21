@@ -23,7 +23,7 @@ await wait();
 type($$("input")[1],"1234");
 await act(async()=>{click(btnByText("Sign in"));});
 await wait();
-console.log("1. Logged in:", document.body.textContent.includes("Dashboard"));
+console.log("1. Logged in:", document.body.textContent.includes("New Bill"));
 
 // ADD PRODUCT
 await act(async()=>{click(btnByText("Products"));}); await wait();
