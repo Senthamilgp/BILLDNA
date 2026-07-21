@@ -69,7 +69,6 @@ export default function BillDNA(){
   const showAll=!!db.settings?.showAll;
   const NAV=[
     ["home","🏠 Home",true],
-    ["pos","🧾 POS Billing",can("billing")],
     ["fullsale","📝 Full Sale",can("billing")],
     ["invoices","📄 Invoices",can("billing")],
     ["purchase","📦 Purchase",can("purchase")],
@@ -160,7 +159,7 @@ export default function BillDNA(){
         </div>
       </div>
       {narrow&&<div style={{position:"fixed",bottom:0,left:0,right:0,display:"flex",background:T.panel,borderTop:`1px solid ${T.line}`,zIndex:50}}>
-        {[["home","🏠","Home"],["pos","🧾","Bill"],["purchase","📦","Purchase"],["reports","📈","Reports"],["more","⋯","More"]].map(([k,ic,l])=>(
+        {[["home","🏠","Home"],["fullsale","🧾","Bill"],["purchase","📦","Purchase"],["reports","📈","Reports"],["more","⋯","More"]].map(([k,ic,l])=>(
           <button key={k} onClick={()=>setView(k)} style={{flex:1,background:"transparent",border:"none",padding:"8px 0 10px",cursor:"pointer",color:view===k?T.acc:T.dim,fontWeight:view===k?800:500}}>
             <div style={{fontSize:20}}>{ic}</div><div style={{fontSize:10}}>{l}</div>
           </button>))}
@@ -274,12 +273,12 @@ function Dashboard({db,company,branch,lowStock,setView}){
     </div>
     {!company&&<Card><div style={{color:T.acc2}}>⚠ Setup pending — Setup page-la company create pannunga.</div></Card>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",gap:10,marginBottom:14}}>
-      {[["pos","🧾","Quick Bill",T.acc],["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]].map(([k,ic,l,c])=>(
+      {[["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]].map(([k,ic,l,c])=>(
         <button key={k} onClick={()=>setView(k)} style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:"14px 6px",cursor:"pointer",boxShadow:"0 1px 3px rgba(20,30,60,.05)"}}>
           <div style={{fontSize:24}}>{ic}</div><div style={{fontSize:12,fontWeight:700,color:c,marginTop:3}}>{l}</div></button>))}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
-      <KPI label="Today's Sales" val={inr(todaySales)} color={T.acc} to="pos"/>
+      <KPI label="Today's Sales" val={inr(todaySales)} color={T.acc} to="fullsale"/>
       <KPI label="This Month" val={inr(monthSales)} sub="last 30 days" color={T.text}/>
       <KPI label="Receivables" val={inr(receivables)} sub="to collect" color={T.acc2} to="crm"/>
       <KPI label="Payables" val={inr(payables)} sub="to pay" color={T.danger} to="purchase"/>
@@ -2098,7 +2097,7 @@ function HomeHub({db,setView,session}){
   const ask=async()=>{if(!q.trim()||busy)return;setBusy(true);setAns("");
     try{setAns(await askClaude(db,q.trim()));}catch{setAns("Network error — try again.");}
     setBusy(false);};
-  const ACTIONS=[["pos","🧾","Quick Bill",T.acc],["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]];
+  const ACTIONS=[["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]];
   return(<div>
     <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
       <div><div style={{fontSize:13,color:T.dim}}>Vanakkam, {session.name}</div>
