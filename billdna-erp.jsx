@@ -38,6 +38,7 @@ export default function BillDNA(){
   const [toast,setToast]=useState(null);
   const [narrow,setNarrow]=useState(typeof window!=="undefined"&&window.innerWidth<720);
   const [profileOpen,setProfileOpen]=useState(false);
+  const toastTimer=useRef(null);
   useEffect(()=>{const on=()=>setNarrow(window.innerWidth<720);window.addEventListener("resize",on);return()=>window.removeEventListener("resize",on);},[]);
 
   useEffect(()=>{(async()=>{
@@ -56,7 +57,7 @@ export default function BillDNA(){
   const save=useCallback(async next=>{setDb(next);try{await window.storage.set(KEY,JSON.stringify(next));}catch(e){console.error(e);}},[]);
   const log=(d,action)=>{d.logs=[{id:uid(),ts:Date.now(),user:session?.name||"System",action},...d.logs].slice(0,300);};
   const notify=(d,msg)=>{d.notifications=[{id:uid(),msg,ts:Date.now(),read:false},...d.notifications].slice(0,150);};
-  const flash=m=>{setToast(m);setTimeout(()=>setToast(null),2200);};
+  const flash=m=>{setToast(m);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(null),2200);};
 
   if(!db) return <div style={{background:T.bg,minHeight:"100vh",color:T.dim,display:"grid",placeItems:"center",fontFamily:"system-ui"}}>Loading BillDNA…</div>;
   if(!session) return <Login db={db} onLogin={u=>{const d=structuredClone(db);log(d,`${u.name} logged in`);save(d);setSession(u);}}/>;

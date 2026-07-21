@@ -1,4 +1,4 @@
-// Simulate full POS billing flow with DOM events
+// Simulate full billing flow (Full Sale — the only billing entry point in the UI; POS kept but hidden) with DOM events
 import { JSDOM } from "jsdom";
 const dom = new JSDOM('<div id="root"></div>', { url: "https://localhost" });
 global.window = dom.window; global.document = dom.window.document;
@@ -23,7 +23,7 @@ await wait();
 type($$("input")[1],"1234");
 await act(async()=>{click(btnByText("Sign in"));});
 await wait();
-console.log("1. Logged in:", document.body.textContent.includes("Quick Bill"));
+console.log("1. Logged in:", document.body.textContent.includes("Dashboard"));
 
 // ADD PRODUCT
 await act(async()=>{click(btnByText("Products"));}); await wait();
@@ -33,18 +33,18 @@ type(inputs.find(i=>i.placeholder==="Selling ₹ *"),"10");
 await act(async()=>{click(btnByText("Save product"));}); await wait();
 console.log("2. Product saved:", document.body.textContent.includes("Tea"));
 
-// POS
-await act(async()=>{click(btnByText("POS Billing"));}); await wait();
-const search=$$("input").find(i=>i.placeholder.includes("Scan"));
-type(search,"Tea"); await wait();
-const suggestion=$$("button").find(b=>b.textContent.includes("Tea —"));
+// FULL SALE (invoice billing entry — Quick Bill/POS is hidden from the menu)
+await act(async()=>{click(btnByText("Full Sale"));}); await wait();
+const itemInput=$$("input").find(i=>i.placeholder==="Item name / search");
+type(itemInput,"Tea"); await wait();
+const suggestion=$$("button").find(b=>b.textContent.startsWith("Tea"));
 console.log("3. Search suggestion appears:", !!suggestion);
 if(suggestion){await act(async()=>{click(suggestion);}); await wait();}
-console.log("4. Cart has Tea:", !document.body.textContent.includes("Cart empty"));
+console.log("4. Row has Tea:", itemInput.value==="Tea");
 
 // SAVE BILL
-await act(async()=>{click(btnByText("Save & Bill"));}); await wait();
-console.log("5. Bill saved (Last bill shown):", document.body.textContent.includes("Last bill"));
+await act(async()=>{click(btnByText("💾 Save"));}); await wait();
+console.log("5. Bill saved (toast shown):", document.body.textContent.includes("saved"));
 
 // INVOICES LIST
 await act(async()=>{click(btnByText("Invoices"));}); await wait();
