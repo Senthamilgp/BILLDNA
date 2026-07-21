@@ -70,6 +70,7 @@ export default function BillDNA(){
   const NAV=[
     ["home","🏠 Home",true],
     ["pos","🧾 POS Billing",can("billing")],
+    ["fullsale","📝 Full Sale",can("billing")],
     ["invoices","📄 Invoices",can("billing")],
     ["purchase","📦 Purchase",can("purchase")],
     ["qexp","💸 Expense",can("billing")||can("accounting")],
@@ -131,6 +132,7 @@ export default function BillDNA(){
           {view==="qrcpt"&&<QuickEntry {...ctx} kind="Receipt"/>}
           {view==="qsal"&&<QuickEntry {...ctx} kind="Salary"/>}
           {view==="wa"&&<WhatsAppCenter {...ctx}/>}
+          {view==="fullsale"&&<FullSale {...ctx}/>}
           {view==="more"&&<MoreGrid nav={NAV} setView={setView} showAll={showAll} toggleAll={toggleAll}/>}
           {view==="dashboard"&&<Dashboard {...ctx} lowStock={lowStock}/>}
           {view==="pos"&&<POS {...ctx}/>}
@@ -864,7 +866,7 @@ function GstReports({db,company,flash}){
   // Rate-wise breakup (outward)
   const rateWise=useMemo(()=>{
     const m={};
-    allTaxInvs.forEach(i=>i.items.forEach(it=>{
+    allTaxInvs.filter(i=>!i.igst).forEach(i=>i.items.forEach(it=>{
       const taxable=it.rate*it.qty;
       const r=it.gst||0;
       m[r]=m[r]||{taxable:0,cgst:0,sgst:0};
@@ -875,7 +877,10 @@ function GstReports({db,company,flash}){
     return m;
   },[allTaxInvs]);
 
-  const totTaxable=Object.values(rateWise).reduce((a,v)=>a+v.taxable,0);
+  const igstAgg=useMemo(()=>{let taxable=0,tax=0;
+    allTaxInvs.filter(i=>i.igst).forEach(i=>{taxable+=i.sub;tax+=i.tax;});
+    return{taxable,tax};},[allTaxInvs]);
+  const totTaxable=Object.values(rateWise).reduce((a,v)=>a+v.taxable,0)+igstAgg.taxable;
   const totCgst=Object.values(rateWise).reduce((a,v)=>a+v.cgst,0);
   const totSgst=Object.values(rateWise).reduce((a,v)=>a+v.sgst,0);
 
@@ -916,8 +921,8 @@ function GstReports({db,company,flash}){
     b2c:gstInvs.filter(i=>!custName(i.customerId)?.gstin).map(i=>({inv:i.no,date:new Date(i.ts).toLocaleDateString("en-IN"),taxable:i.sub,tax:i.tax,total:i.total}))};
 
   const gstr3bData={gstin:company?.gstin||"",period:month,
-    outward:{taxable:totTaxable,cgst:totCgst,sgst:totSgst,igst:0},
-    itc:{estimated:itc},netPayable:Math.max(0,totCgst+totSgst-itc)};
+    outward:{taxable:totTaxable,cgst:totCgst,sgst:totSgst,igst:igstAgg.tax},
+    itc:{estimated:itc},netPayable:Math.max(0,totCgst+totSgst+igstAgg.tax-itc)};
 
   const TABS=[["gstr1","GSTR-1"],["gstr3b","GSTR-3B"],["hsn","HSN Summary"],["tax","Tax Summary"]];
   const th={fontSize:11,color:T.dim,fontWeight:700,padding:"4px 0"};
@@ -958,7 +963,7 @@ function GstReports({db,company,flash}){
         <div style={{fontWeight:700}}>GSTR-3B · Summary · {month}</div>
         <button onClick={()=>exportJson("GSTR3B",gstr3bData)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
       </div>
-      {[["3.1(a) Outward taxable supplies",totTaxable],["CGST",totCgst],["SGST/UTGST",totSgst],["IGST (inter-state — not tracked yet)",0],
+      {[["3.1(a) Outward taxable supplies",totTaxable],["CGST",totCgst],["SGST/UTGST",totSgst],["IGST (inter-state)",igstAgg.tax],
         ["4. Eligible ITC (est. from purchases)",itc],["Net tax payable",gstr3bData.netPayable]].map(([l,v])=>(
         <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"7px 0",borderBottom:`1px solid ${T.line}`,
           fontWeight:l.includes("Net")?800:400,color:l.includes("Net")?T.acc2:T.text}}>
@@ -1575,7 +1580,7 @@ function Finance({db,save,log,flash}){
   // Bank reconciliation: bank-mode entries
   const recon=db.recon||{};
   const bankTxns=[
-    ...db.invoices.filter(i=>["UPI","Card"].includes(i.payMode)&&!i.returned).map(i=>({key:"inv-"+i.id,ts:i.ts,label:`${i.no} sale`,amt:i.paid,dir:"in"})),
+    ...db.invoices.filter(i=>["UPI","Card","Bank"].includes(i.payMode)&&!i.returned).map(i=>({key:"inv-"+i.id,ts:i.ts,label:`${i.no} sale`,amt:i.paid,dir:"in"})),
     ...(db.vouchers||[]).filter(v=>["Bank","UPI","Card"].includes(v.mode)).map(v=>({key:"vch-"+v.id,ts:v.ts,label:`${v.no} ${v.type}`,amt:v.amt,dir:["Receipt","Income"].includes(v.type)?"in":"out"})),
   ].sort((a,b)=>b.ts-a.ts);
   const toggleRecon=key=>{const d=structuredClone(db);
@@ -1923,7 +1928,7 @@ function HomeHub({db,setView,session}){
   const ask=async()=>{if(!q.trim()||busy)return;setBusy(true);setAns("");
     try{setAns(await askClaude(db,q.trim()));}catch{setAns("Network error — try again.");}
     setBusy(false);};
-  const ACTIONS=[["pos","🧾","New Bill",T.acc],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]];
+  const ACTIONS=[["pos","🧾","Quick Bill",T.acc],["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]];
   return(<div>
     <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
       <div><div style={{fontSize:13,color:T.dim}}>Vanakkam, {session.name}</div>
@@ -2075,6 +2080,177 @@ function WhatsAppCenter({db,save,log,flash,company}){
       </div></Card>))}
     {pending.length===0&&<Card><div style={{color:T.ok,fontSize:13}}>✓ Queue empty — bills pottadhum auto-ah inga varum.</div></Card>}
     <div style={{fontSize:11,color:T.dim,marginTop:8}}>One-tap send — WhatsApp open aagi message ready-ah irukkum. Full-auto (tap illama) backend phase-la varum. QR/linked-device method use pannala — number ban risk zero.</div>
+  </div>);
+}
+
+/* ---------- Full Sale (B2B invoice form, v2.2) ---------- */
+function FullSale({db,save,log,notify,flash,branch,company}){
+  const blankRow=()=>({id:uid(),q:"",pid:null,name:"",qty:1,unit:"pcs",rate:"",taxMode:"excl",gst:18});
+  const [mode,setMode]=useState("Cash");
+  const [custId,setCustId]=useState("");
+  const [addParty,setAddParty]=useState(false);
+  const [np,setNp]=useState({name:"",phone:""});
+  const [supply,setSupply]=useState("local");
+  const [rows,setRows]=useState([blankRow(),blankRow()]);
+  const [received,setReceived]=useState("");
+  const [payAcct,setPayAcct]=useState("Cash");
+  const [roundOff,setRoundOff]=useState(true);
+  const [newBank,setNewBank]=useState("");
+  const savingRef=useRef(false);
+
+  const banks=db.settings?.banks||[];
+  const custBal=id=>db.invoices.filter(i=>i.customerId===id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
+  const upd=(id,k,v)=>setRows(rs=>rs.map(r=>r.id===id?{...r,[k]:v}:r));
+  const pick=(id,p)=>setRows(rs=>rs.map(r=>r.id===id?{...r,q:"",pid:p.id,name:p.name,unit:p.unit,rate:p.price,gst:p.gst}:r));
+  const calc=r=>{const qty=+r.qty||0,rate=+r.rate||0,g=+r.gst||0;
+    const base=r.taxMode==="incl"?rate*qty/(1+g/100):rate*qty;
+    const tax=base*g/100;return{base,tax,amt:base+tax};};
+  const live=rows.filter(r=>r.name.trim()&&+r.rate>0&&+r.qty>0);
+  const sub=live.reduce((a,r)=>a+calc(r).base,0);
+  const tax=live.reduce((a,r)=>a+calc(r).tax,0);
+  const raw=sub+tax;
+  const total=roundOff?Math.round(raw):Math.round(raw*100)/100;
+  const rDiff=Math.round((total-raw)*100)/100;
+  const paid=received===""?(mode==="Cash"?total:0):Math.min(+received||0,total);
+  const balance=Math.round((total-paid)*100)/100;
+
+  const addPartyNow=()=>{
+    if(!np.name.trim())return flash("Party name required");
+    const d=structuredClone(db);
+    const c={id:uid(),name:np.name.trim(),phone:np.phone.trim(),gstin:"",city:"",ts:Date.now()};
+    d.customers.push(c);log(d,`Party added: ${c.name}`);save(d);
+    setCustId(c.id);setAddParty(false);setNp({name:"",phone:""});flash("Party added");
+  };
+  const addBank=()=>{
+    if(!newBank.trim())return flash("Bank name?");
+    const d=structuredClone(db);
+    d.settings={...d.settings,banks:[...(d.settings?.banks||[]),newBank.trim()]};
+    save(d);setPayAcct(newBank.trim());setNewBank("");flash("Bank added");
+  };
+
+  const doSave=(andNew)=>{
+    if(live.length===0)return flash("Items add pannunga");
+    if(mode==="Credit"&&!custId)return flash("Credit bill-ku customer must");
+    if(savingRef.current)return;savingRef.current=true;setTimeout(()=>{savingRef.current=false;},0);
+    const d=structuredClone(db);d.seq.inv++;
+    const pfx=d.settings?.invPrefix?d.settings.invPrefix+"-":"";
+    const no=`${pfx}GST-${String(d.seq.inv).padStart(4,"0")}`;
+    const payMode=mode==="Credit"?"Credit":payAcct==="Cash"?"Cash":"Bank";
+    const items=live.map(r=>{const c=calc(r);return{pid:r.pid,name:r.name.trim(),qty:+r.qty,unit:r.unit,
+      rate:Math.round(c.base/+r.qty*100)/100,gst:+r.gst,hsn:r.pid?(d.products.find(p=>p.id===r.pid)?.hsn||""):""};});
+    const inv={id:uid(),no,type:"GST Invoice",customerId:custId||null,items,
+      sub:Math.round(sub*100)/100,tax:Math.round((tax+rDiff)*100)/100,total,paid,payMode,
+      ts:Date.now(),branchId:branch?.id||null,returned:false,igst:supply==="inter"};
+    d.invoices.unshift(inv);
+    items.forEach(it=>{if(!it.pid)return;
+      const p=d.products.find(x=>x.id===it.pid);if(!p)return;
+      const wh=Object.keys(p.stock)[0]||"default";
+      p.stock[wh]=(p.stock[wh]||0)-it.qty;
+      d.stockMoves.unshift({id:uid(),ts:Date.now(),pid:it.pid,wh,qty:-it.qty,type:"Sale",ref:no});
+      if(totalStock(p)<=p.low&&p.low>0)notify(d,`Low stock: ${p.name} (${totalStock(p)} left)`);});
+    const waCust=d.customers.find(c=>c.id===custId);
+    if(waCust?.phone&&(d.settings?.waAuto?.invoice!==false)){
+      d.waQueue=d.waQueue||[];
+      d.waQueue.unshift({id:uid(),key:`inv-${no}`,ts:Date.now(),type:"Invoice",phone:waCust.phone,name:waCust.name,
+        text:`*${company?.name||"Bill"}*\n${supply==="inter"?"Tax Invoice (IGST)":"Tax Invoice"} ${no}\nTotal: ${inr(total)}${balance>0?`\nBalance: ${inr(balance)}`:"\nPaid ✓"}\nNandri! 🙏`,sent:false});
+    }
+    log(d,`Full Sale ${no} — ${inr(total)} (${payMode}${supply==="inter"?", IGST":""})`);
+    save(d);flash(`${no} saved`);
+    setRows([blankRow(),blankRow()]);setReceived("");
+    if(!andNew){setCustId("");setMode("Cash");}
+  };
+
+  const th={fontSize:10.5,color:T.dim,fontWeight:700,padding:"4px 6px",textAlign:"left"};
+  return(<div>
+    <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:10}}>
+      <H1>Full Sale</H1>
+      <div style={{display:"flex",background:T.panel2,borderRadius:20,padding:3,marginLeft:"auto"}}>
+        {["Credit","Cash"].map(m=><button key={m} onClick={()=>setMode(m)}
+          style={{...btn(mode===m?T.acc:"transparent"),color:mode===m?"#fff":T.dim,fontWeight:700,borderRadius:16,padding:"5px 16px"}}>{m}</button>)}
+      </div>
+    </div>
+    <Card>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8}}>
+        <div>
+          <select style={inp(0)} value={custId} onChange={e=>e.target.value==="__add"?setAddParty(true):setCustId(e.target.value)}>
+            <option value="">{mode==="Credit"?"Customer * (Credit)":"Walk-in / select customer"}</option>
+            <option value="__add">➕ Add Party</option>
+            {db.customers.map(c=><option key={c.id} value={c.id}>{c.name} — Bal {inr(custBal(c.id))}</option>)}
+          </select>
+          {custId&&<div style={{fontSize:11,color:custBal(custId)>0?T.danger:T.ok,marginTop:3}}>BAL: {inr(custBal(custId))}</div>}
+        </div>
+        <select style={inp(0)} value={supply} onChange={e=>setSupply(e.target.value)}>
+          <option value="local">Local (CGST+SGST)</option>
+          <option value="inter">Inter-state (IGST)</option>
+        </select>
+      </div>
+      {addParty&&<div style={{display:"flex",gap:8,marginTop:8}}>
+        <input style={inp(0)} placeholder="Party name *" value={np.name} onChange={e=>setNp(s=>({...s,name:e.target.value}))}/>
+        <input style={inp(0)} placeholder="Phone" value={np.phone} onChange={e=>setNp(s=>({...s,phone:e.target.value}))}/>
+        <button onClick={addPartyNow} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Save</button>
+        <button onClick={()=>setAddParty(false)} style={btn(T.panel2)}>✕</button>
+      </div>}
+    </Card>
+    <Card>
+      <div style={{overflowX:"auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"minmax(160px,2fr) 64px 70px 90px 110px 90px 90px 30px",gap:0,minWidth:720}}>
+          {["ITEM","QTY","UNIT","PRICE/UNIT","TAX MODE","GST %","AMOUNT",""].map(h=><div key={h} style={th}>{h}</div>)}
+          {rows.map(r=>{const c=calc(r);
+            const sugg=r.q?db.products.filter(p=>p.name.toLowerCase().includes(r.q.toLowerCase())).slice(0,5):[];
+            return(<React.Fragment key={r.id}>
+              <div style={{position:"relative",padding:3}}>
+                <input style={inp(0)} placeholder="Item name / search" value={r.q||r.name}
+                  onChange={e=>{upd(r.id,"q",e.target.value);upd(r.id,"name",e.target.value);upd(r.id,"pid",null);}}/>
+                {sugg.length>0&&<div style={{position:"absolute",zIndex:20,background:T.panel,border:`1px solid ${T.line}`,borderRadius:8,width:"100%",boxShadow:"0 4px 12px rgba(20,30,60,.12)"}}>
+                  {sugg.map(p=><button key={p.id} onClick={()=>pick(r.id,p)}
+                    style={{display:"flex",width:"100%",background:"transparent",border:"none",padding:"7px 10px",cursor:"pointer",fontSize:12,gap:8,alignItems:"center"}}>
+                    <span style={{flex:1,textAlign:"left",color:T.text}}>{p.name}</span>
+                    <span style={{color:T.acc}}>{inr(p.price)}</span>
+                    <span style={{color:totalStock(p)<0?T.danger:T.dim}}>stk {totalStock(p)}</span>
+                  </button>)}
+                </div>}
+              </div>
+              <div style={{padding:3}}><input style={inp(0)} type="number" value={r.qty} onChange={e=>upd(r.id,"qty",e.target.value)}/></div>
+              <div style={{padding:3}}><select style={inp(0)} value={r.unit} onChange={e=>upd(r.id,"unit",e.target.value)}>
+                {["pcs","kg","sqft","mtr","ltr","box","set","nos"].map(u=><option key={u}>{u}</option>)}</select></div>
+              <div style={{padding:3}}><input style={inp(0)} type="number" placeholder="0" value={r.rate} onChange={e=>upd(r.id,"rate",e.target.value)}/></div>
+              <div style={{padding:3}}><select style={inp(0)} value={r.taxMode} onChange={e=>upd(r.id,"taxMode",e.target.value)}>
+                <option value="excl">Without Tax</option><option value="incl">With Tax</option></select></div>
+              <div style={{padding:3}}><select style={inp(0)} value={r.gst} onChange={e=>upd(r.id,"gst",e.target.value)}>
+                {GST_RATES.map(g=><option key={g} value={g}>GST {g}%</option>)}</select></div>
+              <div style={{padding:"10px 6px",fontSize:13,textAlign:"right",fontWeight:600}}>{c.amt?inr(c.amt):"—"}</div>
+              <button onClick={()=>setRows(rs=>rs.length>1?rs.filter(x=>x.id!==r.id):rs)} style={{background:"transparent",border:"none",color:T.danger,cursor:"pointer"}}>🗑</button>
+            </React.Fragment>);})}
+        </div>
+      </div>
+      <button onClick={()=>setRows(rs=>[...rs,blankRow()])} style={{...btn(T.panel2),marginTop:8,fontWeight:700,color:T.acc}}>+ ADD ROW</button>
+    </Card>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:12,alignItems:"start"}}>
+      <Card>
+        <div style={{fontSize:12,color:T.dim,marginBottom:6}}>Payment</div>
+        <select style={inp()} value={payAcct} onChange={e=>e.target.value==="__bank"?null:setPayAcct(e.target.value)} disabled={mode==="Credit"}>
+          <option>Cash</option><option>Cheque</option>
+          {banks.map(b=><option key={b}>{b}</option>)}
+        </select>
+        <div style={{display:"flex",gap:8}}>
+          <input style={inp(0)} placeholder="+ Add bank A/C" value={newBank} onChange={e=>setNewBank(e.target.value)}/>
+          <button onClick={addBank} style={btn(T.panel2)}>Add</button>
+        </div>
+      </Card>
+      <Card>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:T.dim}}><span>Subtotal</span><span>{inr(sub)}</span></div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:T.dim}}><span>{supply==="inter"?"IGST":"CGST+SGST"}</span><span>{inr(tax)}</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.dim,margin:"4px 0"}}>
+          <input type="checkbox" checked={roundOff} onChange={e=>setRoundOff(e.target.checked)} style={{accentColor:T.acc}}/>Round off {rDiff!==0&&roundOff?`(${rDiff>0?"+":""}${rDiff})`:""}</div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:19,fontWeight:800,color:T.acc,margin:"4px 0"}}><span>Total</span><span>{inr(total)}</span></div>
+        <input style={inp()} type="number" placeholder={mode==="Cash"?`Received (blank = full)`:"Received (blank = 0)"} value={received} onChange={e=>setReceived(e.target.value)}/>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:700,color:balance>0?T.danger:T.ok,marginBottom:8}}><span>Balance</span><span>{inr(balance)}</span></div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>doSave(false)} style={{...btn(T.acc),color:"#fff",fontWeight:800,flex:1,padding:11}}>💾 Save</button>
+          <button onClick={()=>doSave(true)} style={{...btn("#0E7AD3"),color:"#fff",fontWeight:800,flex:1,padding:11}}>Save & New</button>
+        </div>
+      </Card>
+    </div>
   </div>);
 }
 

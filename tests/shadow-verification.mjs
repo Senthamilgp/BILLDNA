@@ -50,7 +50,7 @@ section("PHASE 1-4: EVENT CAPTURE + SHADOW STATE (guided flow)");
 setVal($$("input")[1],"0000");await act(async()=>click(btn("Sign in")));await wait();
 t("wrong PIN rejected",body().includes("incorrect"));
 setVal($$("input")[1],"1234");await act(async()=>click(btn("Sign in")));await wait();
-t("login",body().includes("New Bill"));
+t("login",body().includes("Quick Bill"));
 await act(async()=>click(btn("All features")));await wait();
 t("all-features toggle works",body().includes("Simple mode"));
 await nav("Setup");
