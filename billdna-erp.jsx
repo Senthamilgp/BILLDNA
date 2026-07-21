@@ -74,6 +74,7 @@ export default function BillDNA(){
     ["purchase","📦 Purchase",can("purchase")],
     ["qexp","💸 Expense",can("billing")||can("accounting")],
     ["qsal","👷 Daily Salary",can("billing")||can("settings")],
+    ["wa","📲 WhatsApp",can("billing")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
     ["reports","📈 Reports",can("reports")],
@@ -129,6 +130,7 @@ export default function BillDNA(){
           {view==="qexp"&&<QuickEntry {...ctx} kind="Expense"/>}
           {view==="qrcpt"&&<QuickEntry {...ctx} kind="Receipt"/>}
           {view==="qsal"&&<QuickEntry {...ctx} kind="Salary"/>}
+          {view==="wa"&&<WhatsAppCenter {...ctx}/>}
           {view==="more"&&<MoreGrid nav={NAV} setView={setView} showAll={showAll} toggleAll={toggleAll}/>}
           {view==="dashboard"&&<Dashboard {...ctx} lowStock={lowStock}/>}
           {view==="pos"&&<POS {...ctx}/>}
@@ -337,6 +339,12 @@ function POS({db,save,log,notify,flash,branch}){
         if(totalStock(p)<=p.low&&p.low>0)notify(d,`Low stock: ${p.name} (${totalStock(p)} left)`);
       });
     }
+    const waCust=d.customers.find(c=>c.id===custId);
+    if(waCust?.phone&&(d.settings?.waAuto?.invoice!==false)){
+      d.waQueue=d.waQueue||[];
+      d.waQueue.unshift({id:uid(),key:`inv-${no}`,ts:Date.now(),type:"Invoice",phone:waCust.phone,name:waCust.name,
+        text:`*${d.companies.find(c=>c.id===d.activeCompanyId)?.name||"Bill"}*\n${type} ${no}\nTotal: ${inr(total)}${paid<total?`\nBalance: ${inr(total-paid)}`:"\nPaid ✓"}\nNandri! 🙏`,sent:false});
+    }
     log(d,`${type} ${no} — ${inr(total)} (${payMode})`);
     save(d);setCart([]);setCustId("");setPaidAmt("");setLastInv(inv);flash(`${no} saved`);
   };
@@ -397,6 +405,12 @@ function Invoices({db,save,log,flash}){
   const list=db.invoices.filter(i=>filter==="All"||i.type===filter);
   const receive=(id)=>{const d=structuredClone(db);const i=d.invoices.find(x=>x.id===id);
     i.paid=i.total;d.payments.unshift({id:uid(),ts:Date.now(),ref:i.no,amt:i.total-0,dir:"in"});
+    const tc=d.customers.find(c=>c.id===i.customerId);
+    if(tc?.phone&&(d.settings?.waAuto?.thanks!==false)){
+      d.waQueue=d.waQueue||[];
+      d.waQueue.unshift({id:uid(),key:`thx-${i.no}`,ts:Date.now(),type:"Thanks",phone:tc.phone,name:tc.name,
+        text:`Payment received ✓\n${i.no} — ${inr(i.total)}\nThank you ${tc.name}! 🙏\n— ${d.companies.find(c=>c.id===d.activeCompanyId)?.name||""}`,sent:false});
+    }
     log(d,`Payment received: ${i.no}`);save(d);flash("Marked paid");};
   const doReturn=(id)=>{const d=structuredClone(db);const i=d.invoices.find(x=>x.id===id);
     if(i.returned)return flash("Already returned");
@@ -1989,6 +2003,80 @@ function MoreGrid({nav,setView,showAll,toggleAll}){
 const xls=(rows,name)=>{const ws=XLSX.utils.aoa_to_sheet(rows);
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Sheet1");
   XLSX.writeFile(wb,name);};
+
+/* ---------- WhatsApp Center (queue-based, ToS-safe) ---------- */
+function WhatsAppCenter({db,save,log,flash,company}){
+  const wa=db.settings?.waAuto||{};
+  const queue=db.waQueue||[];
+  const norm=p=>(p||"").replace(/\D/g,"").slice(-10);
+  const link=(phone,text)=>`https://wa.me/91${norm(phone)}?text=${encodeURIComponent(text)}`;
+
+  // auto-populate due reminders (once per day per customer, dedupe by key)
+  useEffect(()=>{
+    if(wa.reminder===false)return;
+    const day=new Date().toISOString().slice(0,10);
+    const d=structuredClone(db);d.waQueue=d.waQueue||[];
+    let added=0;
+    d.customers.forEach(c=>{
+      if(!c.phone)return;
+      const due=d.invoices.filter(i=>i.customerId===c.id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
+      if(due<=0)return;
+      const key=`rem-${c.id}-${day}`;
+      if(d.waQueue.some(q=>q.key===key))return;
+      d.waQueue.unshift({id:uid(),key,ts:Date.now(),type:"Reminder",phone:c.phone,name:c.name,
+        text:`Vanakkam ${c.name},\nPending balance: ${inr(due)}\nKindly settle at your convenience. Nandri! 🙏\n— ${company?.name||"BillDNA"}`,sent:false});
+      added++;
+    });
+    if(added>0)save(d);
+  },[]); // eslint-disable-line
+
+  const markSent=id=>{const d=structuredClone(db);
+    const q=(d.waQueue||[]).find(x=>x.id===id);if(q)q.sent=true;
+    d.waQueue=d.waQueue.slice(0,100);save(d);};
+  const setToggle=k=>{const d=structuredClone(db);
+    d.settings={...d.settings,waAuto:{...wa,[k]:wa[k]===false?true:false}};
+    log(d,`WA auto ${k} toggled`);save(d);};
+  const setOwn=v=>{const d=structuredClone(db);
+    d.settings={...d.settings,ownPhone:v};save(d);};
+  const clearSent=()=>{const d=structuredClone(db);
+    d.waQueue=(d.waQueue||[]).filter(q=>!q.sent);save(d);flash("Cleared");};
+
+  const pending=queue.filter(q=>!q.sent), done=queue.filter(q=>q.sent);
+  const today=new Date().toDateString();
+  const tInvs=db.invoices.filter(i=>new Date(i.ts).toDateString()===today&&i.type.includes("Invoice")&&!i.returned);
+  const digest=`*${company?.name||"BillDNA"} — Daily Summary*\nSales: ${inr(tInvs.reduce((a,i)=>a+i.total,0))} (${tInvs.length} bills)\nPending collections: ${inr(db.invoices.reduce((a,i)=>a+Math.max(0,i.total-i.paid),0))}`;
+  const TOG=[["invoice","🧾 Bill save aana → invoice message queue"],["reminder","⏰ Pending due → daily reminder queue"],["thanks","🙏 Payment vandha → thank-you queue"]];
+
+  return(<div>
+    <H1>📲 WhatsApp</H1>
+    <Card>
+      {TOG.map(([k,l])=>(
+        <div key={k} style={{display:"flex",alignItems:"center",padding:"7px 0",borderBottom:`1px solid ${T.line}`}}>
+          <span style={{flex:1,fontSize:13.5}}>{l}</span>
+          <button onClick={()=>setToggle(k)} style={{...btn(wa[k]===false?T.panel2:T.ok),color:wa[k]===false?T.dim:"#fff",fontWeight:800,minWidth:52}}>{wa[k]===false?"OFF":"ON"}</button>
+        </div>))}
+      <div style={{display:"flex",gap:8,alignItems:"center",marginTop:10}}>
+        <input style={inp(0)} placeholder="Ungal WhatsApp number (digest-ku)" value={db.settings?.ownPhone||""} onChange={e=>setOwn(e.target.value)}/>
+        {db.settings?.ownPhone&&<a href={link(db.settings.ownPhone,digest)} target="_blank" rel="noreferrer" style={{...btn(T.acc),color:"#fff",fontWeight:700,textDecoration:"none",whiteSpace:"nowrap"}}>📊 Digest</a>}
+      </div>
+    </Card>
+    <div style={{display:"flex",alignItems:"center",margin:"12px 0 8px"}}>
+      <div style={{fontWeight:800,fontSize:14}}>Send Queue ({pending.length})</div>
+      {done.length>0&&<button onClick={clearSent} style={{...btn(T.panel2),marginLeft:"auto",fontSize:11,color:T.dim}}>Clear {done.length} sent</button>}
+    </div>
+    {pending.map(q=>(
+      <Card key={q.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1,minWidth:0}}>
+          <b style={{fontSize:13}}>{q.name}</b> <span style={{fontSize:10,color:T.dim}}>· {q.type} · {fmtTs(q.ts)}</span>
+          <div style={{fontSize:11,color:T.dim,whiteSpace:"pre-wrap",maxHeight:48,overflow:"hidden"}}>{q.text}</div>
+        </div>
+        <a href={link(q.phone,q.text)} target="_blank" rel="noreferrer" onClick={()=>markSent(q.id)}
+          style={{...btn(T.ok),color:"#fff",fontWeight:800,textDecoration:"none"}}>Send ➤</a>
+      </div></Card>))}
+    {pending.length===0&&<Card><div style={{color:T.ok,fontSize:13}}>✓ Queue empty — bills pottadhum auto-ah inga varum.</div></Card>}
+    <div style={{fontSize:11,color:T.dim,marginTop:8}}>One-tap send — WhatsApp open aagi message ready-ah irukkum. Full-auto (tap illama) backend phase-la varum. QR/linked-device method use pannala — number ban risk zero.</div>
+  </div>);
+}
 
 /* ---------- UI primitives ---------- */
 const H1=({children})=><div style={{fontSize:20,fontWeight:800,marginBottom:12}}>{children}</div>;
