@@ -78,12 +78,12 @@ export default function BillDNA(){
     ["wa","📲 WhatsApp",can("billing")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
+    ["dashboard","📊 Dashboard",true],
     ["reports","📈 Reports",can("reports")],
     ["gst","🧾 GST Reports",can("accounting")||can("reports")],
     ["companies","🏢 Setup",can("settings")],
     ["backup","💾 Backup",can("settings")],
     ...(showAll?[
-      ["dashboard","📊 Dashboard",true],
       ["inventory","🏬 Inventory",can("inventory")],
       ["accounting","📒 Accounting",can("accounting")],
       ["crm","🤝 CRM",can("billing")||can("masters")],
