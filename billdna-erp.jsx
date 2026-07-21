@@ -37,6 +37,7 @@ export default function BillDNA(){
   const [view,setView]=useState("home");
   const [toast,setToast]=useState(null);
   const [narrow,setNarrow]=useState(typeof window!=="undefined"&&window.innerWidth<720);
+  const [profileOpen,setProfileOpen]=useState(false);
   useEffect(()=>{const on=()=>setNarrow(window.innerWidth<720);window.addEventListener("resize",on);return()=>window.removeEventListener("resize",on);},[]);
 
   useEffect(()=>{(async()=>{
@@ -111,6 +112,7 @@ export default function BillDNA(){
         <div style={{fontWeight:800,letterSpacing:1,fontSize:18}}>Bill<span style={{color:T.acc}}>DNA</span></div>
         <div style={{fontSize:12,color:T.dim,flex:1}}>{company?`${company.name}${branch?` · ${branch.name}`:""}`:"No company selected"}</div>
         {lowStock.length>0&&<div style={{fontSize:11,color:T.acc2}}>⚠ {lowStock.length} low stock</div>}
+        <button onClick={()=>setProfileOpen(true)} style={{...btn(T.panel2),fontSize:12,color:T.text}}>{company?company.name:"⚙ Setup"} ▾</button>
         <div style={{fontSize:12,color:T.dim}}>{session.name} · {session.role}</div>
         <button onClick={()=>setSession(null)} style={btn(T.panel2)}>Logout</button>
       </div>
@@ -164,6 +166,7 @@ export default function BillDNA(){
             <div style={{fontSize:20}}>{ic}</div><div style={{fontSize:10}}>{l}</div>
           </button>))}
       </div>}
+      {profileOpen&&<CompanyModal db={db} save={save} log={log} notify={notify} flash={flash} onClose={()=>setProfileOpen(false)}/>}
       {toast&&<div style={{position:"fixed",bottom:narrow?64:20,left:"50%",transform:"translateX(-50%)",background:T.acc,color:"#fff",padding:"8px 18px",borderRadius:8,fontWeight:700,fontSize:13,zIndex:99}}>{toast}</div>}
     </div>
   );
@@ -691,7 +694,7 @@ function Companies({db,save,log,notify,flash}){
   const addCompany=()=>{
     if(!name.trim())return flash("Company name required");
     const d=structuredClone(db);
-    const c={id:uid(),name:name.trim(),gstin:gstin.trim().toUpperCase(),city:city.trim(),branches:[{id:uid(),name:"Main Branch",city:city.trim()}]};
+    const c={id:uid(),name:name.trim(),gstin:gstin.trim().toUpperCase(),city:city.trim(),email:"",phone:"",address:"",state:"",branches:[{id:uid(),name:"Main Branch",city:city.trim()}]};
     d.companies.push(c);
     if(!d.activeCompanyId){d.activeCompanyId=c.id;d.activeBranchId=c.branches[0].id;}
     log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created`);
@@ -2419,6 +2422,91 @@ function FullSale({db,save,log,notify,flash,branch,company}){
           <button onClick={()=>doSave(true)} style={{...btn("#0E7AD3"),color:"#fff",fontWeight:800,flex:1,padding:11}}>Save & New</button>
         </div>
       </Card>
+    </div>
+  </div>);
+}
+
+/* ---------- Company Profile Modal (Create / Change / Edit) ---------- */
+function CompanyModal({db,save,log,notify,flash,onClose}){
+  const cur=db.companies.find(c=>c.id===db.activeCompanyId);
+  const [tab,setTab]=useState(cur?"view":"create");
+  const empty={name:"",gstin:"",email:"",phone:"",address:"",city:"",state:""};
+  const [f,setF]=useState(cur?{name:cur.name,gstin:cur.gstin||"",email:cur.email||"",phone:cur.phone||"",address:cur.address||"",city:cur.city||"",state:cur.state||""}:empty);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  const createCo=()=>{
+    if(!f.name.trim())return flash("Company name required");
+    const d=structuredClone(db);
+    const c={id:uid(),name:f.name.trim(),gstin:f.gstin.trim().toUpperCase(),email:f.email.trim(),phone:f.phone.trim(),
+      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),branches:[{id:uid(),name:"Main Branch",city:f.city.trim()}]};
+    d.companies.push(c);d.activeCompanyId=c.id;d.activeBranchId=c.branches[0].id;
+    log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created`);
+    save(d);flash("Company created");onClose();
+  };
+  const saveEdit=()=>{
+    if(!f.name.trim())return flash("Company name required");
+    const d=structuredClone(db);const c=d.companies.find(x=>x.id===cur.id);
+    Object.assign(c,{name:f.name.trim(),gstin:f.gstin.trim().toUpperCase(),email:f.email.trim(),phone:f.phone.trim(),
+      address:f.address.trim(),city:f.city.trim(),state:f.state.trim()});
+    log(d,`Company edited: ${c.name}`);save(d);flash("Saved");onClose();
+  };
+  const switchCo=(cId)=>{const d=structuredClone(db);const c=d.companies.find(x=>x.id===cId);
+    d.activeCompanyId=cId;d.activeBranchId=c.branches[0]?.id||null;
+    log(d,`Switched company: ${c.name}`);save(d);flash(`Now: ${c.name}`);onClose();};
+
+  const Field=({label,k,ph,area})=>(
+    <div style={{marginBottom:8}}>
+      <div style={{fontSize:11,color:T.dim,marginBottom:3}}>{label}</div>
+      {area?<textarea style={{...inp(0),minHeight:56}} placeholder={ph} value={f[k]} onChange={e=>set(k,e.target.value)}/>
+        :<input style={inp(0)} placeholder={ph} value={f[k]} onChange={e=>set(k,e.target.value)}/>}
+    </div>);
+  const Row=({l,v})=>v?<div style={{display:"flex",fontSize:13,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
+    <span style={{color:T.dim,width:90}}>{l}</span><span style={{flex:1,fontWeight:600}}>{v}</span></div>:null;
+
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(20,30,50,.45)",zIndex:200,display:"flex",justifyContent:"flex-end"}}>
+    <div onClick={e=>e.stopPropagation()} style={{width:420,maxWidth:"92vw",height:"100%",background:T.bg,overflowY:"auto",boxShadow:"-4px 0 20px rgba(0,0,0,.15)"}}>
+      <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:`1px solid ${T.line}`,background:T.panel,position:"sticky",top:0}}>
+        <div style={{fontWeight:800,fontSize:16}}>Company</div>
+        <button onClick={onClose} style={{...btn(T.panel2),marginLeft:"auto"}}>✕</button>
+      </div>
+      <div style={{display:"flex",gap:6,padding:12,flexWrap:"wrap"}}>
+        {cur&&<button onClick={()=>setTab("view")} style={{...btn(tab==="view"?T.acc:T.panel2),color:tab==="view"?"#fff":T.text,fontWeight:600,fontSize:12}}>Details</button>}
+        <button onClick={()=>{setF(empty);setTab("create");}} style={{...btn(tab==="create"?T.acc:T.panel2),color:tab==="create"?"#fff":T.text,fontWeight:600,fontSize:12}}>➕ Create</button>
+        {db.companies.length>1&&<button onClick={()=>setTab("change")} style={{...btn(tab==="change"?T.acc:T.panel2),color:tab==="change"?"#fff":T.text,fontWeight:600,fontSize:12}}>🔄 Change</button>}
+        {cur&&<button onClick={()=>{setF({name:cur.name,gstin:cur.gstin||"",email:cur.email||"",phone:cur.phone||"",address:cur.address||"",city:cur.city||"",state:cur.state||""});setTab("edit");}} style={{...btn(tab==="edit"?T.acc:T.panel2),color:tab==="edit"?"#fff":T.text,fontWeight:600,fontSize:12}}>✏️ Edit</button>}
+      </div>
+      <div style={{padding:"0 16px 24px"}}>
+        {tab==="view"&&cur&&<Card>
+          <div style={{fontWeight:800,fontSize:17,marginBottom:8}}>{cur.name}</div>
+          <Row l="GSTIN" v={cur.gstin}/><Row l="Email" v={cur.email}/><Row l="Mobile" v={cur.phone}/>
+          <Row l="Address" v={cur.address}/><Row l="City" v={cur.city}/><Row l="State" v={cur.state}/>
+          <Row l="Branches" v={cur.branches.map(b=>b.name).join(", ")}/>
+          {!cur.gstin&&!cur.email&&!cur.phone&&<div style={{fontSize:12,color:T.acc2,marginTop:8}}>Details empty — Edit tab-la fill pannunga.</div>}
+        </Card>}
+        {(tab==="create"||tab==="edit")&&<Card>
+          <div style={{fontWeight:700,marginBottom:10}}>{tab==="create"?"New company":"Edit company"}</div>
+          <Field label="Company name *" k="name" ph="e.g. Sree Enterprises"/>
+          <Field label="GSTIN" k="gstin" ph="33ABCDE1234F1Z5"/>
+          <Field label="Email" k="email" ph="business@email.com"/>
+          <Field label="Mobile" k="phone" ph="98765 43210"/>
+          <Field label="Address" k="address" ph="Shop / office address" area/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <Field label="City" k="city" ph="City"/>
+            <Field label="State" k="state" ph="Tamil Nadu"/>
+          </div>
+          <button onClick={tab==="create"?createCo:saveEdit} style={{...btn(T.acc),color:"#fff",fontWeight:800,width:"100%",padding:11,marginTop:6}}>
+            {tab==="create"?"Create company":"Save changes"}</button>
+        </Card>}
+        {tab==="change"&&<Card>
+          <div style={{fontWeight:700,marginBottom:8}}>Switch company</div>
+          {db.companies.map(c=>(
+            <button key={c.id} onClick={()=>switchCo(c.id)} style={{display:"flex",width:"100%",alignItems:"center",gap:10,background:c.id===db.activeCompanyId?T.panel2:"transparent",border:`1px solid ${T.line}`,borderRadius:10,padding:"10px 12px",marginBottom:6,cursor:"pointer"}}>
+              <div style={{flex:1,textAlign:"left"}}><b style={{fontSize:13}}>{c.name}</b>
+                <div style={{fontSize:11,color:T.dim}}>{c.gstin||"no GSTIN"} · {c.branches.length} branch</div></div>
+              {c.id===db.activeCompanyId&&<span style={{fontSize:11,color:T.ok,fontWeight:700}}>✓ Active</span>}
+            </button>))}
+        </Card>}
+      </div>
     </div>
   </div>);
 }
