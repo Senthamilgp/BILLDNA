@@ -78,7 +78,6 @@ export default function BillDNA(){
     ["wa","📲 WhatsApp",can("billing")],
     ["products","🛒 Products",can("masters")],
     ["customers","👥 Customers",can("masters")],
-    ["dashboard","📊 Dashboard",true],
     ["reports","📈 Reports",can("reports")],
     ["gst","🧾 GST Reports",can("accounting")||can("reports")],
     ["companies","🏢 Setup",can("settings")],
@@ -127,14 +126,13 @@ export default function BillDNA(){
           </div>
         </div>}
         <div style={{flex:1,overflow:"auto",padding:narrow?"14px 12px 78px":18}}>
-          {view==="home"&&<HomeHub {...ctx} setView={setView}/>}
+          {view==="home"&&<Dashboard {...ctx} lowStock={lowStock} setView={setView}/>}
           {view==="qexp"&&<QuickEntry {...ctx} kind="Expense"/>}
           {view==="qrcpt"&&<QuickEntry {...ctx} kind="Receipt"/>}
           {view==="qsal"&&<QuickEntry {...ctx} kind="Salary"/>}
           {view==="wa"&&<WhatsAppCenter {...ctx}/>}
           {view==="fullsale"&&<FullSale {...ctx}/>}
           {view==="more"&&<MoreGrid nav={NAV} setView={setView} showAll={showAll} toggleAll={toggleAll}/>}
-          {view==="dashboard"&&<Dashboard {...ctx} lowStock={lowStock} setView={setView}/>}
           {view==="pos"&&<POS {...ctx}/>}
           {view==="invoices"&&<Invoices {...ctx}/>}
           {view==="purchase"&&<Purchase {...ctx}/>}
@@ -275,6 +273,11 @@ function Dashboard({db,company,branch,lowStock,setView}){
       <div style={{fontSize:12,color:T.dim,marginLeft:"auto"}}>{company?`${company.name}${branch?` · ${branch.name}`:""}`:"No company"}</div>
     </div>
     {!company&&<Card><div style={{color:T.acc2}}>⚠ Setup pending — Setup page-la company create pannunga.</div></Card>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",gap:10,marginBottom:14}}>
+      {[["pos","🧾","Quick Bill",T.acc],["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]].map(([k,ic,l,c])=>(
+        <button key={k} onClick={()=>setView(k)} style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:"14px 6px",cursor:"pointer",boxShadow:"0 1px 3px rgba(20,30,60,.05)"}}>
+          <div style={{fontSize:24}}>{ic}</div><div style={{fontSize:12,fontWeight:700,color:c,marginTop:3}}>{l}</div></button>))}
+    </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
       <KPI label="Today's Sales" val={inr(todaySales)} color={T.acc} to="pos"/>
       <KPI label="This Month" val={inr(monthSales)} sub="last 30 days" color={T.text}/>
