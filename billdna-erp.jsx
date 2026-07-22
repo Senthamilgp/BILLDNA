@@ -11,6 +11,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
    ============================================================ */
 
 import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
 import { supa, signIn, signUp, signOut, onAuth, currentUser, pullFromCloud, pushToCloud, schedulePush, subscribeRealtime, captureLead } from "./sync.js";
 const T = { bg:"#FFFFFF", panel:"#FFFFFF", panel2:"#F4F4F4", line:"#D6D6D6", text:"#000000", dim:"#6B6B6B", acc:"#000000", acc2:"#E8730C", danger:"#E8730C", ok:"#000000" };
 const PERMS = ["billing","purchase","inventory","accounting","reports","masters","settings","users"];
@@ -599,6 +600,7 @@ function Invoices({db,save,log,flash}){
         </div>
         <div style={{fontWeight:700,color:T.acc}}>{inr(i.total)}</div>
         <div style={{fontSize:11,color:i.paid>=i.total?T.ok:T.acc2}}>{i.paid>=i.total?"Paid":`Due ${inr(i.total-i.paid)}`}</div>
+        <button onClick={()=>invoicePDF(i,db.companies.find(c=>c.id===db.activeCompanyId),custName(i.customerId))} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ PDF</button>
         {i.paid<i.total&&<button onClick={()=>receive(i.id)} style={btn(T.panel2)}>Mark paid</button>}
         {!i.returned&&i.type.includes("Invoice")&&<button onClick={()=>doReturn(i.id)} style={{...btn(T.panel2),color:T.danger}}>Return</button>}
       </div></Card>))}
@@ -2262,6 +2264,105 @@ function MoreGrid({nav,setView,showAll,toggleAll}){
   </div>);
 }
 /* ---------- Excel export helper ---------- */
+// ---- Invoice PDF (proper GST tax invoice / Bill of Supply) ----
+function invoicePDF(inv, company, customerName){
+  const isComp = !!inv.comp || company?.scheme==="composite";
+  const doc = new jsPDF({unit:"mm", format:"a4"});
+  const W = 210, M = 14; let y = 16;
+  const money = n => "Rs " + (Math.round((+n||0)*100)/100).toLocaleString("en-IN");
+  const line = (yy)=>{doc.setDrawColor(180);doc.line(M,yy,W-M,yy);};
+
+  // Header — company
+  doc.setFont("helvetica","bold"); doc.setFontSize(17);
+  doc.text(company?.name || "BillDNA", M, y);
+  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90);
+  y += 6;
+  const hdr = [];
+  if(company?.address) hdr.push(company.address);
+  const cs = [company?.city, company?.state].filter(Boolean).join(", "); if(cs) hdr.push(cs);
+  if(company?.gstin) hdr.push("GSTIN: " + company.gstin);
+  const contact = [company?.phone && ("Ph: "+company.phone), company?.email].filter(Boolean).join("   ");
+  if(contact) hdr.push(contact);
+  hdr.forEach(l=>{ doc.text(l, M, y); y += 4.5; });
+  doc.setTextColor(0);
+
+  // Title band
+  y += 2; line(y); y += 7;
+  doc.setFont("helvetica","bold"); doc.setFontSize(13);
+  doc.text(isComp ? "BILL OF SUPPLY" : "TAX INVOICE", W/2, y, {align:"center"});
+  y += 7; line(y); y += 7;
+
+  // Bill-to + meta
+  doc.setFontSize(9);
+  doc.setFont("helvetica","bold"); doc.text("Bill To:", M, y);
+  doc.setFont("helvetica","normal"); doc.text(customerName || "Walk-in", M+16, y);
+  doc.setFont("helvetica","bold"); doc.text("Invoice No:", W-M-52, y);
+  doc.setFont("helvetica","normal"); doc.text(String(inv.no||""), W-M-24, y);
+  y += 5;
+  doc.setFont("helvetica","bold"); doc.text("Date:", W-M-52, y);
+  doc.setFont("helvetica","normal"); doc.text(new Date(inv.ts).toLocaleDateString("en-IN"), W-M-24, y);
+  if(inv.igst){ doc.setFont("helvetica","bold"); doc.text("Supply:", M, y); doc.setFont("helvetica","normal"); doc.text("Inter-state (IGST)", M+16, y);}
+  y += 6;
+
+  // Table header
+  const cols = isComp
+    ? [["#",M,8],["Item",M+10,74],["Qty",M+86,16],["Rate",M+104,26],["Amount",W-M-26,26]]
+    : [["#",M,8],["Item",M+10,58],["HSN",M+70,16],["Qty",M+88,12],["Rate",M+102,22],["GST%",M+126,16],["Amount",W-M-28,28]];
+  doc.setFillColor(238); doc.rect(M, y-4, W-2*M, 7, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(8.5);
+  cols.forEach(([t,x,w])=>{ const rightAlign=["Amount","Rate","Qty","GST%"].includes(t); doc.text(t, rightAlign?x+w:x, y, rightAlign?{align:"right"}:undefined); });
+  y += 6; doc.setFont("helvetica","normal");
+
+  // Rows
+  (inv.items||[]).forEach((it,i)=>{
+    if(y > 250){ doc.addPage(); y = 20; }
+    const amt = (+it.rate||0)*(+it.qty||0);
+    if(isComp){
+      doc.text(String(i+1), M, y);
+      doc.text(String(it.name||"").slice(0,42), M+10, y);
+      doc.text(String(it.qty)+" "+(it.unit||""), M+86+16, y, {align:"right"});
+      doc.text(money(it.rate), M+104+26, y, {align:"right"});
+      doc.text(money(amt), W-M, y, {align:"right"});
+    } else {
+      doc.text(String(i+1), M, y);
+      doc.text(String(it.name||"").slice(0,34), M+10, y);
+      doc.text(String(it.hsn||"-"), M+70, y);
+      doc.text(String(it.qty), M+88+12, y, {align:"right"});
+      doc.text(money(it.rate), M+102+22, y, {align:"right"});
+      doc.text(String(it.gst||0)+"%", M+126+16, y, {align:"right"});
+      doc.text(money(amt), W-M, y, {align:"right"});
+    }
+    y += 5.5;
+  });
+
+  y += 1; line(y); y += 6;
+  // Totals (right aligned block)
+  const tx = W-M-58, vx = W-M;
+  const trow=(label,val,bold)=>{ doc.setFont("helvetica", bold?"bold":"normal"); doc.setFontSize(bold?10:9);
+    doc.text(label, tx, y); doc.text(money(val), vx, y, {align:"right"}); y += bold?6.5:5; };
+  trow("Subtotal", inv.sub);
+  if(!isComp && +inv.tax>0){
+    if(inv.igst) trow("IGST", inv.tax);
+    else { trow("CGST", inv.tax/2); trow("SGST", inv.tax/2); }
+  }
+  trow("Total", inv.total, true);
+  if(+inv.paid < +inv.total){ trow("Paid", inv.paid); trow("Balance Due", inv.total - inv.paid, true); }
+  else trow("Paid", inv.total);
+
+  // Composite mandatory note
+  if(isComp){
+    y += 4; doc.setFont("helvetica","italic"); doc.setFontSize(7.5); doc.setTextColor(120);
+    doc.text("Composition taxable person, not eligible to collect tax on supplies.", M, y);
+    doc.setTextColor(0);
+  }
+  // Footer
+  y = 285; doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(120);
+  doc.text("Thank you for your business!   |   Generated by BillDNA", W/2, y, {align:"center"});
+  doc.setTextColor(0);
+
+  doc.save((inv.no||"invoice") + ".pdf");
+}
+
 const xls=(rows,name)=>{const ws=XLSX.utils.aoa_to_sheet(rows);
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Sheet1");
   XLSX.writeFile(wb,name);};
@@ -2356,6 +2457,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
   const [roundOff,setRoundOff]=useState(true);
   const [newBank,setNewBank]=useState("");
   const savingRef=useRef(false);
+  const [lastInv,setLastInv]=useState(null);
 
   const banks=db.settings?.banks||[];
   const custBal=id=>db.invoices.filter(i=>i.customerId===id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
@@ -2420,6 +2522,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     }
     log(d,`Full Sale ${no} — ${inr(total)} (${payMode}${supply==="inter"?", IGST":""})`);
     save(d);flash(`${no} saved`);
+    setLastInv({inv,cust:d.customers.find(c=>c.id===custId)?.name||"Walk-in"});
     setRows([blankRow(),blankRow()]);setReceived("");
     if(!andNew){setCustId("");setMode("Cash");}
   };
@@ -2513,6 +2616,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
           <button onClick={()=>doSave(false)} style={{...btn(T.acc),color:"#fff",fontWeight:800,flex:1,padding:11}}>💾 Save</button>
           <button onClick={()=>doSave(true)} style={{...btn(T.text),color:"#fff",fontWeight:800,flex:1,padding:11}}>Save & New</button>
         </div>
+        {lastInv&&<button onClick={()=>invoicePDF(lastInv.inv,company,lastInv.cust)} style={{...btn(T.panel2),width:"100%",marginTop:8,fontWeight:700,color:T.acc}}>⬇ Download last bill PDF ({lastInv.inv.no})</button>}
       </Card>
     </div>
   </div>);
