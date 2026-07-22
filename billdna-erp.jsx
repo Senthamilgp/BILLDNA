@@ -11,7 +11,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
    ============================================================ */
 
 import * as XLSX from "xlsx";
-const T = { bg:"#F3F5F9", panel:"#FFFFFF", panel2:"#EEF2F7", line:"#E1E7EF", text:"#1B2437", dim:"#68738B", acc:"#12A990", acc2:"#E8960C", danger:"#D9483B", ok:"#1D9E5F" };
+const T = { bg:"#FFFFFF", panel:"#FFFFFF", panel2:"#F4F4F4", line:"#D6D6D6", text:"#000000", dim:"#6B6B6B", acc:"#000000", acc2:"#E8730C", danger:"#E8730C", ok:"#000000" };
 const PERMS = ["billing","purchase","inventory","accounting","reports","masters","settings","users"];
 const ROLE_PRESETS = { Owner:PERMS, Manager:["billing","purchase","inventory","reports","masters"], Cashier:["billing"], Accountant:["accounting","reports"] };
 const GST_RATES = [0,5,12,18,28];
@@ -188,7 +188,7 @@ function Login({db,onLogin}){
       <input style={inp()} placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/>
       <input style={inp()} placeholder="PIN" type="password" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
       {err&&<div style={{color:T.danger,fontSize:12,marginBottom:8}}>{err}</div>}
-      <button onClick={go} style={{...btn(T.acc),width:"100%",color:"#08221E",fontWeight:800,padding:10}}>Sign in</button>
+      <button onClick={go} style={{...btn(T.acc),width:"100%",color:"#fff",fontWeight:800,padding:10}}>Sign in</button>
     </div></div>);
 }
 
@@ -246,17 +246,17 @@ function Dashboard({db,company,branch,lowStock,setView}){
   // Inflows / Outflows (last 30d)
   const vch=db.vouchers||[];
   const inflow=[
-    {l:"Sales collected",v:salesInv.filter(i=>i.ts>=cutoff).reduce((a,i)=>a+i.paid,0),c:T.ok},
-    {l:"Other income",v:vch.filter(v=>["Income","Receipt"].includes(v.type)&&v.ts>=cutoff).reduce((a,v)=>a+v.amt,0),c:"#4CAF7D"},
+    {l:"Sales collected",v:salesInv.filter(i=>i.ts>=cutoff).reduce((a,i)=>a+i.paid,0),c:"#000000"},
+    {l:"Other income",v:vch.filter(v=>["Income","Receipt"].includes(v.type)&&v.ts>=cutoff).reduce((a,v)=>a+v.amt,0),c:"#555555"},
   ];
   const outflow=[
-    {l:"Purchases",v:db.purchases.filter(p=>p.ts>=cutoff).reduce((a,p)=>a+p.paid,0),c:T.danger},
-    {l:"Expenses",v:vch.filter(v=>v.type==="Expense"&&!v.account.startsWith("Daily Wage:")&&v.ts>=cutoff).reduce((a,v)=>a+v.amt,0),c:"#E36A5C"},
-    {l:"Wages/Salary",v:vch.filter(v=>(v.account.startsWith("Daily Wage:")||v.no?.startsWith("SAL-"))&&v.ts>=cutoff).reduce((a,v)=>a+v.amt,0),c:"#EE8B7F"},
+    {l:"Purchases",v:db.purchases.filter(p=>p.ts>=cutoff).reduce((a,p)=>a+p.paid,0),c:"#000000"},
+    {l:"Expenses",v:vch.filter(v=>v.type==="Expense"&&!v.account.startsWith("Daily Wage:")&&v.ts>=cutoff).reduce((a,v)=>a+v.amt,0),c:"#555555"},
+    {l:"Wages/Salary",v:vch.filter(v=>(v.account.startsWith("Daily Wage:")||v.no?.startsWith("SAL-"))&&v.ts>=cutoff).reduce((a,v)=>a+v.amt,0),c:"#999999"},
   ].filter(x=>x.v>0);
   // top products donut (30d revenue)
   const pr={};salesInv.filter(i=>i.ts>=cutoff).forEach(i=>i.items.forEach(it=>{pr[it.name]=(pr[it.name]||0)+it.rate*it.qty;}));
-  const palette=["#12A990","#0E7AD3","#E8960C","#9B59B6","#E36A5C","#4CAF7D"];
+  const palette=["#000000","#333333","#555555","#777777","#999999","#BBBBBB"];
   const donut=Object.entries(pr).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([l,v],i)=>({l,v,c:palette[i%6]}));
 
   const KPI=({label,val,sub,color,to})=>(
@@ -278,7 +278,7 @@ function Dashboard({db,company,branch,lowStock,setView}){
     </div>
     {!company&&<Card><div style={{color:T.acc2}}>⚠ Setup pending — Setup page-la company create pannunga.</div></Card>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",gap:10,marginBottom:14}}>
-      {[["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]].map(([k,ic,l,c])=>(
+      {[["fullsale","📝","Invoice",T.text],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase",T.text]].map(([k,ic,l,c])=>(
         <button key={k} onClick={()=>setView(k)} style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:"14px 6px",cursor:"pointer",boxShadow:"0 1px 3px rgba(20,30,60,.05)"}}>
           <div style={{fontSize:24}}>{ic}</div><div style={{fontSize:12,fontWeight:700,color:c,marginTop:3}}>{l}</div></button>))}
     </div>
@@ -354,7 +354,7 @@ function Products({db,save,log,flash}){
         <input style={inp(0)} placeholder="Cost ₹" type="number" value={f.cost} onChange={e=>set("cost",e.target.value)}/>
         <input style={inp(0)} placeholder="Low-stock alert qty" type="number" value={f.low} onChange={e=>set("low",e.target.value)}/>
       </div>
-      <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Save product</button>
+      <button onClick={add} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Save product</button>
     </Card>
     <input style={inp()} placeholder="🔍 Search name / barcode / SKU" value={q} onChange={e=>setQ(e.target.value)}/>
     {list.map(p=>(
@@ -392,7 +392,7 @@ function Parties({db,save,log,flash,kind,title}){
       <input style={inp(0)} placeholder="GSTIN" value={f.gstin} onChange={e=>set("gstin",e.target.value)}/>
       <input style={inp(0)} placeholder="City" value={f.city} onChange={e=>set("city",e.target.value)}/>
     </div>
-    <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add</button></Card>
+    <button onClick={add} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Add</button></Card>
     {db[kind].map(c=>(
       <Card key={c.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
         <div style={{flex:1}}><b>{c.name}</b> <span style={{color:T.dim,fontSize:12}}>· {c.phone||"—"} · {c.city||"—"}</span>
@@ -488,13 +488,13 @@ function POS({db,save,log,notify,flash,branch}){
           <div style={{fontSize:18,fontWeight:800,display:"flex",justifyContent:"space-between",margin:"6px 0",color:T.acc}}><span>Total</span><span>{inr(total)}</span></div>
           <select style={inp()} value={payMode} onChange={e=>setPayMode(e.target.value)}>{["Cash","UPI","Card","Credit"].map(m=><option key={m}>{m}</option>)}</select>
           <input style={inp()} type="number" placeholder={`Paid amount (blank = full ${inr(total)})`} value={paidAmt} onChange={e=>setPaidAmt(e.target.value)}/>
-          <button onClick={finalize} style={{...btn(T.acc),width:"100%",color:"#08221E",fontWeight:800,padding:10}}>💾 Save & Bill</button>
+          <button onClick={finalize} style={{...btn(T.acc),width:"100%",color:"#fff",fontWeight:800,padding:10}}>💾 Save & Bill</button>
         </Card>
         {lastInv&&<Card>
           <div style={{fontWeight:700,marginBottom:6}}>Last bill: {lastInv.no}</div>
           <div style={{fontSize:12,color:T.dim,marginBottom:8}}>{inr(lastInv.total)} · {lastInv.payMode}</div>
           <button onClick={()=>window.print()} style={{...btn(T.panel2),marginRight:6}}>🖨 Print</button>
-          {waLink&&<a href={waLink} target="_blank" rel="noreferrer" style={{...btn(T.ok),color:"#08221E",fontWeight:700,textDecoration:"none",display:"inline-block"}}>WhatsApp</a>}
+          {waLink&&<a href={waLink} target="_blank" rel="noreferrer" style={{...btn(T.ok),color:"#fff",fontWeight:700,textDecoration:"none",display:"inline-block"}}>WhatsApp</a>}
         </Card>}
       </div>
     </div>
@@ -587,8 +587,8 @@ function Purchase({db,save,log,flash}){
         </div>))}
       {items.length>0&&<>
         <div style={{fontSize:16,fontWeight:800,color:T.acc,margin:"10px 0"}}>Total: {inr(total)}</div>
-        <button onClick={()=>saveP(true)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginRight:8}}>Save (Paid)</button>
-        <button onClick={()=>saveP(false)} style={{...btn(T.acc2),color:"#08221E",fontWeight:700}}>Save (Credit)</button></>}
+        <button onClick={()=>saveP(true)} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginRight:8}}>Save (Paid)</button>
+        <button onClick={()=>saveP(false)} style={{...btn(T.acc2),color:"#fff",fontWeight:700}}>Save (Credit)</button></>}
     </Card>
     <div style={{fontWeight:700,margin:"12px 0 8px"}}>Purchase history</div>
     {db.purchases.map(p=>(
@@ -644,7 +644,7 @@ function Inventory({db,save,log,flash,company}){
     <H1>Inventory</H1>
     <div style={{display:"flex",gap:6,marginBottom:12}}>
       {[["stock","Stock"],["adjust","Adjustment"],["transfer","Transfer"],["moves","Movements"],["wh","Warehouses"]].map(([k,l])=>(
-        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>))}
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400}}>{l}</button>))}
     </div>
     {tab==="stock"&&db.products.map(p=>(
       <Card key={p.id}><div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -658,7 +658,7 @@ function Inventory({db,save,log,flash,company}){
         {db.products.map(p=><option key={p.id} value={p.id}>{p.name} (now {totalStock(p)})</option>)}
       </select>
       <input style={inp()} type="number" placeholder="New qty (physical count)" value={adjQty} onChange={e=>setAdjQty(e.target.value)}/>
-      <button onClick={adjust} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Apply adjustment</button>
+      <button onClick={adjust} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Apply adjustment</button>
     </Card>}
     {tab==="transfer"&&<Card>
       <select style={inp()} value={trPid} onChange={e=>setTrPid(e.target.value)}>
@@ -670,7 +670,7 @@ function Inventory({db,save,log,flash,company}){
         <select style={inp(0)} value={trTo} onChange={e=>setTrTo(e.target.value)}><option value="">To</option>{whs.map(w=><option key={w}>{w}</option>)}</select>
         <input style={inp(0)} type="number" placeholder="Qty" value={trQty} onChange={e=>setTrQty(e.target.value)}/>
       </div>
-      <button onClick={transfer} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Transfer</button>
+      <button onClick={transfer} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Transfer</button>
     </Card>}
     {tab==="moves"&&<Card>
       {db.stockMoves.slice(0,50).map(m=>(
@@ -682,7 +682,7 @@ function Inventory({db,save,log,flash,company}){
     {tab==="wh"&&<Card>
       <div style={{display:"flex",gap:8}}>
         <input style={inp(0)} placeholder="Warehouse name" value={whName} onChange={e=>setWhName(e.target.value)}/>
-        <button onClick={addWh} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Add</button>
+        <button onClick={addWh} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Add</button>
       </div>
       <div style={{marginTop:10,fontSize:13,color:T.dim}}>{whs.join(" · ")}</div>
     </Card>}
@@ -718,20 +718,20 @@ function Companies({db,save,log,notify,flash}){
         <input style={inp()} placeholder="Company name *" value={name} onChange={e=>setName(e.target.value)}/>
         <input style={inp()} placeholder="GSTIN" value={gstin} onChange={e=>setGstin(e.target.value)}/>
         <input style={inp()} placeholder="City" value={city} onChange={e=>setCity(e.target.value)}/>
-        <button onClick={addCompany} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Create</button></Card>
+        <button onClick={addCompany} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Create</button></Card>
       <Card><div style={{fontWeight:700,marginBottom:8}}>New branch</div>
         <select style={inp()} value={sel||""} onChange={e=>setSel(e.target.value)}>
           <option value="">Select company</option>
           {db.companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <input style={inp()} placeholder="Branch name *" value={bName} onChange={e=>setBName(e.target.value)}/>
-        <button onClick={addBranch} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Add branch</button></Card>
+        <button onClick={addBranch} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Add branch</button></Card>
     </div>
     {db.companies.map(c=>(
       <Card key={c.id}><div style={{fontWeight:700}}>{c.name} {c.gstin&&<span style={{color:T.dim,fontSize:12}}>· {c.gstin}</span>}</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:8}}>
           {c.branches.map(b=>{const active=db.activeCompanyId===c.id&&db.activeBranchId===b.id;
             return <button key={b.id} onClick={()=>activate(c.id,b.id)}
-              style={{...btn(active?T.acc:T.panel2),color:active?"#08221E":T.text,fontWeight:active?700:400}}>{b.name}{active?" ✓":""}</button>;})}
+              style={{...btn(active?T.acc:T.panel2),color:active?"#fff":T.text,fontWeight:active?700:400}}>{b.name}{active?" ✓":""}</button>;})}
         </div></Card>))}
   </div>);
 }
@@ -758,7 +758,7 @@ function Users({db,save,log,flash,session}){
       <input style={inp(0)} placeholder="PIN *" value={f.pin} onChange={e=>set("pin",e.target.value)}/>
       <select style={inp(0)} value={f.role} onChange={e=>set("role",e.target.value)}>{Object.keys(ROLE_PRESETS).map(r=><option key={r}>{r}</option>)}</select>
     </div>
-    <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add user</button></Card>
+    <button onClick={add} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Add user</button></Card>
     {db.users.map(u=>(
       <Card key={u.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
         <div style={{flex:1}}><b>{u.name}</b> <span style={{color:T.dim,fontSize:12}}>· {u.email} · {u.role}</span></div>
@@ -803,7 +803,7 @@ function Backup({db,save,log,flash}){
     <H1>Backup & Restore</H1>
     <Card><div style={{fontWeight:700,marginBottom:6}}>Backup</div>
       <div style={{fontSize:12,color:T.dim,marginBottom:10}}>Downloads full data as JSON. Save it to your Google Drive or email it to yourself.</div>
-      <button onClick={download} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Download backup</button></Card>
+      <button onClick={download} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Download backup</button></Card>
     <Card><div style={{fontWeight:700,marginBottom:6}}>Restore</div>
       <textarea style={{...inp(0),minHeight:100,width:"100%",boxSizing:"border-box",fontFamily:"monospace",fontSize:11}}
         value={txt} onChange={e=>setTxt(e.target.value)} placeholder='Paste backup JSON here'/>
@@ -873,7 +873,7 @@ function Accounting({db,save,log,flash}){
   return(<div>
     <H1>Accounting</H1>
     <div style={{display:"flex",gap:5,marginBottom:12,flexWrap:"wrap"}}>
-      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12}}>{l}</button>)}
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400,fontSize:12}}>{l}</button>)}
     </div>
 
     {tab==="daybook"&&<Card><div style={{fontWeight:700,marginBottom:8}}>Today's transactions</div>
@@ -896,7 +896,7 @@ function Accounting({db,save,log,flash}){
         <select style={inp(0)} value={f.mode} onChange={e=>set("mode",e.target.value)}>{["Cash","Bank","UPI","Card"].map(m=><option key={m}>{m}</option>)}</select>
         <input style={inp(0)} placeholder="Note" value={f.note} onChange={e=>set("note",e.target.value)}/>
       </div>
-      <button onClick={addVoucher} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Save voucher</button></Card>
+      <button onClick={addVoucher} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Save voucher</button></Card>
       {vouchers.map(v=><Card key={v.id}><div style={{display:"flex",gap:10,alignItems:"center"}}>
         <div style={{flex:1}}><b>{v.no}</b> <span style={{fontSize:11,color:T.dim}}>· {v.type} · {v.account} · {fmtTs(v.ts)}</span>
           {v.note&&<div style={{fontSize:11,color:T.dim}}>{v.note}</div>}</div>
@@ -1054,7 +1054,7 @@ function GstReports({db,company,flash}){
     return(<div>
     <H1>GST Reports</H1>
     <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
-      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
       <input type="month" style={{...inp(0),width:150,marginLeft:"auto"}} value={month} onChange={e=>setMonth(e.target.value)}/>
       <button onClick={()=>xls([["Rate %","Taxable","CGST","SGST"],...Object.entries(rateWise).map(([r,v])=>[r,v.taxable,v.cgst,v.sgst]),[],["HSN","Qty","Taxable","GST %","Tax"],...Object.entries(hsn).map(([k,v])=>[k,v.qty,v.taxable,v.gst,v.tax])],`gst-${month}.xlsx`)} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ Excel</button>
       <button onClick={()=>window.print()} style={btn(T.panel2)}>🖨 PDF</button>
@@ -1065,7 +1065,7 @@ function GstReports({db,company,flash}){
       <Card>
         <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
           <div style={{fontWeight:700}}>GSTR-1 · Outward supplies · {month}</div>
-          <button onClick={()=>exportJson("GSTR1",gstr1Data)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
+          <button onClick={()=>exportJson("GSTR1",gstr1Data)} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
         </div>
         <div style={{fontWeight:700,fontSize:13,color:T.acc,margin:"8px 0 4px"}}>B2B ({gstr1Data.b2b.length} invoices)</div>
         <div style={{display:"flex",gap:8}}><span style={{...th,width:90}}>Invoice</span><span style={{...th,flex:1}}>Party / GSTIN</span><span style={{...th,width:90,textAlign:"right"}}>Taxable</span><span style={{...th,width:80,textAlign:"right"}}>Tax</span></div>
@@ -1084,7 +1084,7 @@ function GstReports({db,company,flash}){
     {tab==="gstr3b"&&<Card>
       <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
         <div style={{fontWeight:700}}>GSTR-3B · Summary · {month}</div>
-        <button onClick={()=>exportJson("GSTR3B",gstr3bData)} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
+        <button onClick={()=>exportJson("GSTR3B",gstr3bData)} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginLeft:"auto"}}>⬇ Export JSON</button>
       </div>
       {[["3.1(a) Outward taxable supplies",totTaxable],["CGST",totCgst],["SGST/UTGST",totSgst],["IGST (inter-state)",igstAgg.tax],
         ["4. Eligible ITC (est. from purchases)",itc],["Net tax payable",gstr3bData.netPayable]].map(([l,v])=>(
@@ -1152,7 +1152,7 @@ function Crm({db,save,log,flash}){
   return(<div>
     <H1>CRM</H1>
     <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
-      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>)}
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>)}
     </div>
 
     {tab==="credit"&&<>
@@ -1162,7 +1162,7 @@ function Crm({db,save,log,flash}){
           <div style={{flex:1,minWidth:150}}><b>{c.name}</b>
             <div style={{fontSize:11,color:T.dim}}>{c.phone||"no phone"} · {custInvs(c.id).filter(i=>i.paid<i.total).length} pending bills</div></div>
           <b style={{color:T.acc2}}>{inr(due(c.id))}</b>
-          {c.phone&&<a href={waRemind(c)} target="_blank" rel="noreferrer" style={{...btn(T.ok),color:"#08221E",fontWeight:700,textDecoration:"none"}}>📲 Remind</a>}
+          {c.phone&&<a href={waRemind(c)} target="_blank" rel="noreferrer" style={{...btn(T.ok),color:"#fff",fontWeight:700,textDecoration:"none"}}>📲 Remind</a>}
         </div></Card>))}
     </>}
 
@@ -1197,7 +1197,7 @@ function Crm({db,save,log,flash}){
           <input style={inp(0)} placeholder="Note (e.g. call about new order) *" value={fu.note} onChange={e=>setFu(s=>({...s,note:e.target.value}))}/>
           <input style={inp(0)} type="date" value={fu.due} onChange={e=>setFu(s=>({...s,due:e.target.value}))}/>
         </div>
-        <button onClick={addFu} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add follow-up</button>
+        <button onClick={addFu} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Add follow-up</button>
       </Card>
       {followups.map(f=>(
         <Card key={f.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1515,7 +1515,7 @@ function Manufacturing({db,save,log,notify,flash}){
   return(<div>
     <H1>Manufacturing</H1>
     <div style={{display:"flex",gap:6,marginBottom:12}}>
-      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
     </div>
 
     {tab==="bom"&&<>
@@ -1538,7 +1538,7 @@ function Manufacturing({db,save,log,notify,flash}){
           <button onClick={()=>setBomItems(c=>c.filter(x=>x.pid!==i.pid))} style={{...btn(T.panel2),color:T.danger,padding:"2px 8px"}}>✕</button></div>)}
         <input style={inp()} type="number" placeholder="Labor/overhead cost per unit ₹" value={bomLabor} onChange={e=>setBomLabor(e.target.value)}/>
         {bomItems.length>0&&<div style={{fontSize:13,fontWeight:700,color:T.acc,marginBottom:8}}>Est. cost/unit: {inr(bomCost(bomItems)+(+bomLabor||0))}</div>}
-        <button onClick={saveBom} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Save BOM</button>
+        <button onClick={saveBom} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Save BOM</button>
       </Card>
       {boms.map(b=>(
         <Card key={b.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1564,7 +1564,7 @@ function Manufacturing({db,save,log,notify,flash}){
         return <div style={{fontSize:12,color:T.dim,margin:"8px 0"}}>
           Raw needed: {b.items.map(i=>`${pName(i.pid)} ×${i.qty*+prodQty}`).join(", ")}<br/>
           Total cost: <b style={{color:T.acc}}>{inr((bomCost(b.items)+b.labor)*+prodQty)}</b></div>;})()}
-      <button onClick={produce} style={{...btn(T.acc),color:"#08221E",fontWeight:800,marginTop:6,padding:10}}>▶ Run production</button>
+      <button onClick={produce} style={{...btn(T.acc),color:"#fff",fontWeight:800,marginTop:6,padding:10}}>▶ Run production</button>
     </Card>}
 
     {tab==="runs"&&<Card>
@@ -1645,7 +1645,7 @@ function Hr({db,save,log,flash}){
   return(<div>
     <H1>HR & Payroll</H1>
     <div style={{display:"flex",gap:6,marginBottom:12}}>
-      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
+      {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
     </div>
 
     {tab==="emp"&&<>
@@ -1655,7 +1655,7 @@ function Hr({db,save,log,flash}){
         <input style={inp(0)} placeholder="Role (e.g. Sales)" value={f.role} onChange={e=>setF(s=>({...s,role:e.target.value}))}/>
         <input style={inp(0)} type="number" placeholder="Monthly salary ₹ *" value={f.salary} onChange={e=>setF(s=>({...s,salary:e.target.value}))}/>
       </div>
-      <button onClick={addEmp} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add employee</button></Card>
+      <button onClick={addEmp} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Add employee</button></Card>
       {emps.map(e=>(
         <Card key={e.id}><div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1}}><b>{e.name}</b> <span style={{fontSize:11,color:T.dim}}>· {e.role||"—"} · {e.phone||"—"}</span></div>
@@ -1674,7 +1674,7 @@ function Hr({db,save,log,flash}){
           <div style={{flex:1,fontSize:13}}><b>{e.name}</b></div>
           {[["P","Present",T.ok],["H","Half-day",T.acc2],["A","Absent",T.danger]].map(([s,l,c])=>(
             <button key={s} onClick={()=>mark(e.id,s)}
-              style={{...btn(cur===s?c:T.panel2),color:cur===s?"#08221E":T.text,fontWeight:cur===s?800:400}}>{l}</button>))}
+              style={{...btn(cur===s?c:T.panel2),color:cur===s?"#fff":T.text,fontWeight:cur===s?800:400}}>{l}</button>))}
         </div></Card>);})}
       {emps.filter(e=>e.active).length===0&&<div style={{color:T.dim,fontSize:13}}>Active employees illa.</div>}
     </>}
@@ -1698,7 +1698,7 @@ function Hr({db,save,log,flash}){
         <div style={{display:"flex",justifyContent:"space-between",fontWeight:800,margin:"10px 0",fontSize:15}}>
           <span>Total payout</span>
           <span style={{color:T.acc}}>{inr(emps.filter(e=>e.active).reduce((a,e)=>a+calcSalary(e,inc[e.id]),0))}</span></div>
-        <button onClick={runPayroll} style={{...btn(T.acc),color:"#08221E",fontWeight:800,padding:10,width:"100%"}}>💰 Run payroll & save</button>
+        <button onClick={runPayroll} style={{...btn(T.acc),color:"#fff",fontWeight:800,padding:10,width:"100%"}}>💰 Run payroll & save</button>
       </Card>
     </>}
 
@@ -1740,7 +1740,7 @@ function Assets({db,save,log,flash}){
       <input style={inp(0)} type="number" placeholder="Dep %/yr" value={f.rate} onChange={e=>setF(s=>({...s,rate:e.target.value}))}/>
       <input style={inp(0)} type="number" placeholder="Service every (days)" value={f.serviceEvery} onChange={e=>setF(s=>({...s,serviceEvery:e.target.value}))}/>
     </div>
-    <button onClick={add} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add asset</button></Card>
+    <button onClick={add} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Add asset</button></Card>
     {assets.map(a=>(
       <Card key={a.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
         <div style={{flex:1,minWidth:150}}><b>{a.name}</b>
@@ -1787,7 +1787,7 @@ function Finance({db,save,log,flash}){
     <H1>Finance</H1>
     <div style={{display:"flex",gap:6,marginBottom:12}}>
       {[["loans","Loans & EMI"],["recon",`Bank Reconciliation${unreconciled?` (${unreconciled})`:""}`]].map(([k,l])=>(
-        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>))}
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400}}>{l}</button>))}
     </div>
     {tab==="loans"&&<>
       <Card><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
@@ -1796,7 +1796,7 @@ function Finance({db,save,log,flash}){
         <input style={inp(0)} type="number" placeholder="Interest %/yr" value={f.rate} onChange={e=>setF(s=>({...s,rate:e.target.value}))}/>
         <input style={inp(0)} type="number" placeholder="Months *" value={f.months} onChange={e=>setF(s=>({...s,months:e.target.value}))}/>
       </div>
-      <button onClick={addLoan} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Add loan</button></Card>
+      <button onClick={addLoan} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Add loan</button></Card>
       {loans.map(l=>{
         const outstanding=l.emi*(l.months-l.paid);
         const totalInterest=l.emi*l.months-l.principal;
@@ -1805,7 +1805,7 @@ function Finance({db,save,log,flash}){
             <div style={{fontSize:11,color:T.dim}}>{inr(l.principal)} @ {l.rate}% · {l.paid}/{l.months} EMIs · interest total {inr(Math.round(totalInterest))}</div></div>
           <div style={{fontSize:13}}>EMI <b style={{color:T.acc}}>{inr(l.emi)}</b></div>
           <div style={{fontSize:12,color:T.acc2}}>Balance {inr(outstanding)}</div>
-          {l.paid<l.months?<button onClick={()=>payEmi(l.id)} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Pay EMI</button>
+          {l.paid<l.months?<button onClick={()=>payEmi(l.id)} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Pay EMI</button>
             :<span style={{fontSize:11,color:T.ok}}>✓ Closed</span>}
         </div></Card>);})}
       {loans.length===0&&<div style={{color:T.dim,fontSize:13}}>No loans tracked.</div>}
@@ -1867,7 +1867,7 @@ function Store({db,save,log,notify,flash,company}){
     <H1>Online Store</H1>
     <div style={{display:"flex",gap:6,marginBottom:12}}>
       {[["shop","🛍 Shop (customer view)"],["orders",`Orders${orders.filter(o=>o.status!=="Delivered").length?` (${orders.filter(o=>o.status!=="Delivered").length})`:""}`]].map(([k,l])=>(
-        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>))}
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>))}
     </div>
     {tab==="shop"&&<>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10,marginBottom:12}}>
@@ -1890,7 +1890,7 @@ function Store({db,save,log,notify,flash,company}){
           <input style={inp(0)} placeholder="Customer name *" value={cust.name} onChange={e=>setCust(s=>({...s,name:e.target.value}))}/>
           <input style={inp(0)} placeholder="Phone" value={cust.phone} onChange={e=>setCust(s=>({...s,phone:e.target.value}))}/>
         </div>
-        <button onClick={placeOrder} style={{...btn(T.acc),color:"#08221E",fontWeight:800,marginTop:10,padding:10,width:"100%"}}>🛒 Place order</button>
+        <button onClick={placeOrder} style={{...btn(T.acc),color:"#fff",fontWeight:800,marginTop:10,padding:10,width:"100%"}}>🛒 Place order</button>
       </Card>}
     </>}
     {tab==="orders"&&<>
@@ -1901,7 +1901,7 @@ function Store({db,save,log,notify,flash,company}){
           <b style={{color:T.acc}}>{inr(o.total)}</b>
           <span style={{fontSize:11,fontWeight:700,color:o.status==="Delivered"?T.ok:T.acc2}}>{o.status}</span>
           {upiId&&o.status!=="Delivered"&&<a href={upiLink(o)} style={{...btn(T.panel2),textDecoration:"none",fontSize:11}}>UPI pay</a>}
-          {o.status!=="Delivered"&&<button onClick={()=>advance(o.id)} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>→ {STAGES[STAGES.indexOf(o.status)+1]}</button>}
+          {o.status!=="Delivered"&&<button onClick={()=>advance(o.id)} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>→ {STAGES[STAGES.indexOf(o.status)+1]}</button>}
         </div></Card>))}
       {orders.length===0&&<div style={{color:T.dim,fontSize:13}}>No online orders yet.</div>}
       <div style={{fontSize:11,color:T.dim,marginTop:8}}>Delivered aana udane GST invoice + stock out auto-create aagum. UPI ID-ah Admin Panel-la set pannunga.</div>
@@ -1961,7 +1961,7 @@ function Ai({db,flash}){
     <H1>AI Assistant</H1>
     <div style={{display:"flex",gap:6,marginBottom:12}}>
       {[["forecast","📦 Inventory Forecast"],["predict","📈 Sales Prediction"],["chat","💬 Business Advisor"]].map(([k,l])=>(
-        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>))}
+        <button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#fff":T.text,fontWeight:tab===k?700:400,fontSize:12.5}}>{l}</button>))}
     </div>
     {tab==="forecast"&&<Card>
       <div style={{fontWeight:700,marginBottom:4}}>Reorder suggestions (14-day cover, 30-day sales basis)</div>
@@ -1988,13 +1988,13 @@ function Ai({db,flash}){
           {chat.length===0&&<div style={{color:T.dim,fontSize:13}}>Business patthi kelunga — "Indha maasam profit eppadi?", "Enna stock order pannanum?", "Sales increase panna idea?"</div>}
           {chat.map((m,i)=>(
             <div key={i} style={{marginBottom:8,textAlign:m.role==="user"?"right":"left"}}>
-              <div style={{display:"inline-block",background:m.role==="user"?T.acc:T.panel2,color:m.role==="user"?"#08221E":T.text,padding:"8px 12px",borderRadius:10,fontSize:13,maxWidth:"85%",whiteSpace:"pre-wrap",textAlign:"left"}}>{m.text}</div>
+              <div style={{display:"inline-block",background:m.role==="user"?T.acc:T.panel2,color:m.role==="user"?"#fff":T.text,padding:"8px 12px",borderRadius:10,fontSize:13,maxWidth:"85%",whiteSpace:"pre-wrap",textAlign:"left"}}>{m.text}</div>
             </div>))}
           {busy&&<div style={{color:T.dim,fontSize:12}}>AI yosikkuthu…</div>}
         </div>
         <div style={{display:"flex",gap:8}}>
           <input style={inp(0)} placeholder="Ungal business question..." value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&ask()}/>
-          <button onClick={ask} disabled={busy} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Ask</button>
+          <button onClick={ask} disabled={busy} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Ask</button>
         </div>
       </Card>
     </>}
@@ -2033,13 +2033,13 @@ function Integrations({db,flash,company}){
     <H1>Export & Tools</H1>
     <Card><div style={{fontWeight:700,marginBottom:8}}>Excel / CSV Export</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <button onClick={expProducts} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Products CSV</button>
-        <button onClick={expCustomers} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Customers CSV</button>
-        <button onClick={expInvoices} style={{...btn(T.acc),color:"#08221E",fontWeight:700}}>Invoices CSV</button>
+        <button onClick={expProducts} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Products CSV</button>
+        <button onClick={expCustomers} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Customers CSV</button>
+        <button onClick={expInvoices} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>Invoices CSV</button>
       </div>
       <div style={{fontSize:11,color:T.dim,marginTop:6}}>Excel/Google Sheets-la direct open aagum.</div></Card>
     <Card><div style={{fontWeight:700,marginBottom:8}}>Tally Export</div>
-      <button onClick={expTally} style={{...btn(T.acc2),color:"#08221E",fontWeight:700}}>Sales vouchers → Tally XML</button></Card>
+      <button onClick={expTally} style={{...btn(T.acc2),color:"#fff",fontWeight:700}}>Sales vouchers → Tally XML</button></Card>
     <Card><div style={{fontWeight:700,marginBottom:8}}>Print / PDF</div>
       <button onClick={()=>window.print()} style={{...btn(T.panel2)}}>🖨 Print current page (browser PDF save)</button>
       <div style={{fontSize:11,color:T.dim,marginTop:6}}>Thermal printer: browser print dialog-la 80mm paper size select pannunga.</div></Card>
@@ -2083,7 +2083,7 @@ function AdminPanel({db,save,log,flash,session}){
         <div><div style={{fontSize:11,color:T.dim,marginBottom:3}}>Invoice prefix (optional)</div>
           <input style={inp(0)} placeholder="e.g. SD" value={f.invPrefix} onChange={e=>setF(x=>({...x,invPrefix:e.target.value}))}/></div>
       </div>
-      <button onClick={saveSettings} style={{...btn(T.acc),color:"#08221E",fontWeight:700,marginTop:10}}>Save settings</button></Card>
+      <button onClick={saveSettings} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginTop:10}}>Save settings</button></Card>
     <Card><div style={{fontWeight:700,marginBottom:4}}>Audit</div>
       <div style={{fontSize:12.5,color:T.dim}}>Full activity trail Activity Log page-la irukku · Backup & Restore page-la data safety · User roles Users page-la manage pannalam.</div></Card>
   </div>);
@@ -2125,7 +2125,7 @@ function HomeHub({db,setView,session}){
   const ask=async()=>{if(!q.trim()||busy)return;setBusy(true);setAns("");
     try{setAns(await askClaude(db,q.trim()));}catch{setAns("Network error — try again.");}
     setBusy(false);};
-  const ACTIONS=[["fullsale","📝","Invoice","#0E7AD3"],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase","#5B6BD6"]];
+  const ACTIONS=[["fullsale","📝","Invoice",T.text],["qrcpt","🧾","Receipt",T.ok],["qexp","💸","Expense",T.danger],["qsal","👷","Salary",T.acc2],["purchase","📦","Purchase",T.text]];
   return(<div>
     <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
       <div><div style={{fontSize:13,color:T.dim}}>Vanakkam, {session.name}</div>
@@ -2451,7 +2451,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
         <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:700,color:balance>0?T.danger:T.ok,marginBottom:8}}><span>Balance</span><span>{inr(balance)}</span></div>
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>doSave(false)} style={{...btn(T.acc),color:"#fff",fontWeight:800,flex:1,padding:11}}>💾 Save</button>
-          <button onClick={()=>doSave(true)} style={{...btn("#0E7AD3"),color:"#fff",fontWeight:800,flex:1,padding:11}}>Save & New</button>
+          <button onClick={()=>doSave(true)} style={{...btn(T.text),color:"#fff",fontWeight:800,flex:1,padding:11}}>Save & New</button>
         </div>
       </Card>
     </div>
