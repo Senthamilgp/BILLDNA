@@ -668,10 +668,22 @@ function Invoices({db,save,log,flash}){
   const custName=id=>db.customers.find(c=>c.id===id)?.name||"Walk-in";
   const exportXls=()=>xls([["No","Type","Date","Customer","Subtotal","Tax","Total","Paid","Mode"],
     ...list.map(i=>[i.no,i.type,new Date(i.ts).toLocaleDateString("en-IN"),custName(i.customerId),i.sub,i.tax,i.total,i.paid,i.payMode])],"invoices.xlsx");
+  const stat=(l,v,c)=>(<div style={{flex:1,minWidth:100,background:T.panel,border:`1px solid ${T.line}`,borderRadius:12,padding:"10px 14px"}}>
+    <div style={{fontSize:11,color:T.dim}}>{l}</div><div style={{fontSize:20,fontWeight:800,color:c||T.text}}>{v}</div></div>);
+  const paidCount=list.filter(i=>i.paid>=i.total&&!i.returned).length;
+  const dueCount=list.filter(i=>i.paid<i.total&&!i.returned).length;
+  const retCount=list.filter(i=>i.returned).length;
+  const badge=(txt,c)=>(<span style={{fontSize:10.5,fontWeight:700,color:c,border:`1px solid ${c}`,borderRadius:20,padding:"2px 9px",whiteSpace:"nowrap"}}>{txt}</span>);
   return(<div>
     <div style={{display:"flex",alignItems:"center",gap:8}}><H1>Invoices</H1>
       <button onClick={exportXls} style={{...btn(T.acc),color:"#fff",fontWeight:700,marginLeft:"auto"}}>⬇ Excel</button>
       <button onClick={()=>window.print()} style={btn(T.panel2)}>🖨 PDF</button></div>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+      {stat("Total",list.length)}
+      {stat("Paid",paidCount)}
+      {stat("Due",dueCount,dueCount>0?T.acc2:T.text)}
+      {stat("Returned",retCount,retCount>0?T.danger:T.text)}
+    </div>
     <select style={{...inp(),maxWidth:220}} value={filter} onChange={e=>setFilter(e.target.value)}>
       <option>All</option>{INV_TYPES.map(t=><option key={t}>{t}</option>)}
     </select>
@@ -679,10 +691,10 @@ function Invoices({db,save,log,flash}){
       <Card key={i.id}><div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
         <div style={{flex:1,minWidth:160}}>
           <b>{i.no}</b> <span style={{fontSize:11,color:T.dim}}>· {i.type} · {fmtTs(i.ts)}</span>
-          <div style={{fontSize:12,color:T.dim}}>{custName(i.customerId)} · {i.items.length} items{i.returned&&<span style={{color:T.danger}}> · RETURNED</span>}</div>
+          <div style={{fontSize:12,color:T.dim}}>{custName(i.customerId)} · {i.items.length} items</div>
         </div>
         <div style={{fontWeight:700,color:T.acc}}>{inr(i.total)}</div>
-        <div style={{fontSize:11,color:i.paid>=i.total?T.ok:T.acc2}}>{i.paid>=i.total?"Paid":`Due ${inr(i.total-i.paid)}`}</div>
+        {i.returned?badge("RETURNED",T.danger):i.paid>=i.total?badge("PAID",T.text):badge(`DUE ${inr(i.total-i.paid)}`,T.acc2)}
         <button onClick={()=>invoicePDF(i,db.companies.find(c=>c.id===db.activeCompanyId),custName(i.customerId))} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ PDF</button>
         {i.paid<i.total&&<button onClick={()=>receive(i.id)} style={btn(T.panel2)}>Mark paid</button>}
         {!i.returned&&i.type.includes("Invoice")&&<button onClick={()=>doReturn(i.id)} style={{...btn(T.panel2),color:T.danger}}>Return</button>}
