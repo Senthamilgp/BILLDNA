@@ -2734,13 +2734,13 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
     d.activeCompanyId=cId;d.activeBranchId=c.branches[0]?.id||null;
     log(d,`Switched company: ${c.name}`);save(d);flash(`Now: ${c.name}`);onClose();};
 
-  const Field=({label,k,ph,area})=>(
+  const field=(label,k,ph,area)=>(
     <div style={{marginBottom:8}}>
       <div style={{fontSize:11,color:T.dim,marginBottom:3}}>{label}</div>
       {area?<textarea style={{...inp(0),minHeight:56}} placeholder={ph} value={f[k]} onChange={e=>set(k,e.target.value)}/>
         :<input style={inp(0)} placeholder={ph} value={f[k]} onChange={e=>set(k,e.target.value)}/>}
     </div>);
-  const Row=({l,v})=>v?<div style={{display:"flex",fontSize:13,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
+  const row=(l,v)=>v?<div style={{display:"flex",fontSize:13,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
     <span style={{color:T.dim,width:90}}>{l}</span><span style={{flex:1,fontWeight:600}}>{v}</span></div>:null;
 
   return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(20,30,50,.45)",zIndex:200,display:"flex",justifyContent:"flex-end"}}>
@@ -2758,15 +2758,15 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
       <div style={{padding:"0 16px 24px"}}>
         {tab==="view"&&cur&&<Card>
           <div style={{fontWeight:800,fontSize:17,marginBottom:8}}>{cur.name}</div>
-          <Row l="Scheme" v={cur.scheme==="composite"?`Composition (${cur.compRate||1}%)`:"Regular GST"}/>
-          <Row l="GSTIN" v={cur.gstin}/><Row l="Email" v={cur.email}/><Row l="Mobile" v={cur.phone}/>
-          <Row l="Address" v={cur.address}/><Row l="City" v={cur.city}/><Row l="State" v={cur.state}/>
-          <Row l="Branches" v={cur.branches.map(b=>b.name).join(", ")}/>
+          {row("Scheme", cur.scheme==="composite"?`Composition (${cur.compRate||1}%)`:"Regular GST")}
+          {row("GSTIN", cur.gstin)}{row("Email", cur.email)}{row("Mobile", cur.phone)}
+          {row("Address", cur.address)}{row("City", cur.city)}{row("State", cur.state)}
+          {row("Branches", cur.branches.map(b=>b.name).join(", "))}
           {!cur.gstin&&!cur.email&&!cur.phone&&<div style={{fontSize:12,color:T.acc2,marginTop:8}}>Details empty — Edit tab-la fill pannunga.</div>}
         </Card>}
         {(tab==="create"||tab==="edit")&&<Card>
           <div style={{fontWeight:700,marginBottom:10}}>{tab==="create"?"New company":"Edit company"}</div>
-          <Field label="Company name *" k="name" ph="e.g. Sree Enterprises"/>
+          {field("Company name *","name","e.g. Sree Enterprises")}
           <div style={{marginBottom:8}}>
             <div style={{fontSize:11,color:T.dim,marginBottom:4}}>GST Scheme *</div>
             <div style={{display:"flex",gap:8}}>
@@ -2782,13 +2782,13 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
               <div style={{fontSize:10.5,color:T.acc2,marginTop:6}}>⚠ Composition: Bill of Supply · no tax from customer · intra-state only · CMP-08</div>
             </div>}
           </div>
-          <Field label="GSTIN" k="gstin" ph="33ABCDE1234F1Z5"/>
-          <Field label="Email" k="email" ph="business@email.com"/>
-          <Field label="Mobile" k="phone" ph="98765 43210"/>
-          <Field label="Address" k="address" ph="Shop / office address" area/>
+          {field("GSTIN","gstin","33ABCDE1234F1Z5")}
+          {field("Email","email","business@email.com")}
+          {field("Mobile","phone","98765 43210")}
+          {field("Address","address","Shop / office address",true)}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <Field label="City" k="city" ph="City"/>
-            <Field label="State" k="state" ph="Tamil Nadu"/>
+            {field("City","city","City")}
+            {field("State","state","Tamil Nadu")}
           </div>
           <button onClick={tab==="create"?createCo:saveEdit} style={{...btn(T.acc),color:"#fff",fontWeight:800,width:"100%",padding:11,marginTop:6}}>
             {tab==="create"?"Create company":"Save changes"}</button>
