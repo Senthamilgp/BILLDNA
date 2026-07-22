@@ -11,8 +11,91 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
    ============================================================ */
 
 import * as XLSX from "xlsx";
-import { jsPDF } from "jspdf";
-import { supa, signIn, signUp, signOut, onAuth, currentUser, pullFromCloud, pushToCloud, schedulePush, subscribeRealtime, captureLead } from "./sync.js";
+// ============================================================
+// Inlined cloud-sync + lazy library loaders.
+// jsPDF and Supabase load from CDN at runtime (keeps this a single
+// self-contained file — works both as a Claude artifact and as a
+// deployed static build). In tests / non-browser, everything stubs.
+// ============================================================
+const IS_TEST = (typeof window==="undefined") || ("__BILLDNA_TEST__" in globalThis);
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    if(typeof document==="undefined") return rej(new Error("no-doc"));
+    const ex=[...document.scripts].find(x=>x.src===src);
+    if(ex){ if(ex.getAttribute("data-loaded")) return res(); ex.addEventListener("load",()=>res()); ex.addEventListener("error",rej); return; }
+    const el=document.createElement("script"); el.src=src; el.async=true;
+    el.onload=()=>{el.setAttribute("data-loaded","1");res();}; el.onerror=rej;
+    document.head.appendChild(el);
+  });
+}
+// ---- jsPDF (lazy) ----
+let _jspdfP=null;
+async function getJsPDF(){
+  if(typeof window!=="undefined" && window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+  if(!_jspdfP) _jspdfP=loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+  await _jspdfP; return window.jspdf.jsPDF;
+}
+// ---- Supabase (lazy) ----
+const SUPABASE_URL="https://vakbwubhdsvefulguklb.supabase.co";
+const SUPABASE_KEY="sb_publishable_JG5-iUFv4FUtd8Cdr-uv3A_ElllF78i";
+function stubSupa(){
+  const q={insert:async()=>({}),select(){return this;},eq(){return this;},order(){return this;},limit:async()=>({data:[]}),single:async()=>({data:null}),upsert:async()=>({})};
+  return {auth:{getUser:async()=>({data:{user:null}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signUp:async()=>({error:{message:"offline"}}),signInWithPassword:async()=>({error:{message:"offline"}}),signOut:async()=>({})},from:()=>q,channel:()=>({on(){return this;},subscribe(){return this;}}),removeChannel(){}};
+}
+let _supa=null,_supaP=null;
+async function getSupa(){
+  if(_supa) return _supa;
+  if(IS_TEST || typeof window==="undefined" || typeof WebSocket==="undefined"){ _supa=stubSupa(); return _supa; }
+  if(!_supaP) _supaP=loadScript("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js");
+  try{ await _supaP; _supa=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true}}); }
+  catch{ _supa=stubSupa(); }
+  return _supa;
+}
+// ---- auth ----
+async function signUp(email,password){ const s=await getSupa(); return s.auth.signUp({email,password}); }
+async function signIn(email,password){ const s=await getSupa(); return s.auth.signInWithPassword({email,password}); }
+async function signOut(){ const s=await getSupa(); return s.auth.signOut(); }
+async function currentUser(){ const s=await getSupa(); const {data}=await s.auth.getUser(); return data?.user||null; }
+function onAuth(cb){
+  let sub={unsubscribe(){}};
+  getSupa().then(s=>{ const r=s.auth.onAuthStateChange((_e,session)=>cb(session?.user||null)); sub=r?.data?.subscription||sub; });
+  return { data:{ subscription:{ unsubscribe:()=>{try{sub.unsubscribe&&sub.unsubscribe();}catch{}} } } };
+}
+async function captureLead(mobile,email){ try{ const s=await getSupa(); await s.from("leads").insert({mobile:mobile||null,email:email||null}); return true;}catch{return false;} }
+// ---- offline-first sync ----
+const _LKEY="billdna_erp_v2";
+async function _readLocal(){ try{ const r=await window.storage.get(_LKEY); return r?JSON.parse(r.value):null; }catch{return null;} }
+async function _writeLocal(o){ try{ await window.storage.set(_LKEY,JSON.stringify(o)); }catch{} }
+async function pullFromCloud(user){
+  if(!user) return null; const s=await getSupa();
+  const {data:recs}=await s.from("records").select("*").eq("owner_id",user.id).eq("kind","app_state").order("updated_at",{ascending:false}).limit(1);
+  if(recs && recs.length){ const cloud=recs[0].data; const local=await _readLocal();
+    const cloudAt=new Date(recs[0].updated_at).getTime(); const localAt=(local&&local._syncedAt)||0;
+    if(!local || cloudAt>=localAt){ cloud._syncedAt=cloudAt; await _writeLocal(cloud); return cloud; } }
+  return null;
+}
+let _pushTimer=null;
+function schedulePush(user,delay=2500){ if(!user) return; clearTimeout(_pushTimer); _pushTimer=setTimeout(()=>pushToCloud(user),delay); }
+async function pushToCloud(user){
+  if(!user || (typeof navigator!=="undefined" && !navigator.onLine)) return {ok:false};
+  const local=await _readLocal(); if(!local) return {ok:false};
+  try{
+    const s=await getSupa(); const first=(local.companies||[])[0]; let companyId=null;
+    if(first){ const {data:ex}=await s.from("companies").select("id").eq("owner_id",user.id).limit(1);
+      if(ex && ex.length) companyId=ex[0].id;
+      else{ const {data:ins}=await s.from("companies").insert({owner_id:user.id,name:first.name,gstin:first.gstin||null,email:first.email||null,phone:first.phone||null,address:first.address||null,city:first.city||null,state:first.state||null,scheme:first.scheme||"regular",comp_rate:first.compRate||1}).select("id").single();
+        companyId=ins&&ins.id; } }
+    if(!companyId) return {ok:false};
+    const now=Date.now(); local._syncedAt=now; await _writeLocal(local);
+    await s.from("records").upsert({owner_id:user.id,company_id:companyId,kind:"app_state",local_id:"state",data:local,deleted:false},{onConflict:"company_id,kind,local_id"});
+    return {ok:true,at:now};
+  }catch(e){ return {ok:false,reason:e.message}; }
+}
+function subscribeRealtime(user,onChange){
+  if(!user) return ()=>{}; let ch=null;
+  getSupa().then(s=>{ ch=s.channel("app_state_"+user.id).on("postgres_changes",{event:"*",schema:"public",table:"records",filter:`owner_id=eq.${user.id}`},()=>onChange()).subscribe(); });
+  return ()=>{ try{ if(ch) getSupa().then(s=>s.removeChannel(ch)); }catch{} };
+}
 const T = { bg:"#FFFFFF", panel:"#FFFFFF", panel2:"#F4F4F4", line:"#D6D6D6", text:"#000000", dim:"#6B6B6B", acc:"#000000", acc2:"#E8730C", danger:"#E8730C", ok:"#000000" };
 const PERMS = ["billing","purchase","inventory","accounting","reports","masters","settings","users"];
 const ROLE_PRESETS = { Owner:PERMS, Manager:["billing","purchase","inventory","reports","masters"], Cashier:["billing"], Accountant:["accounting","reports"] };
@@ -2265,9 +2348,10 @@ function MoreGrid({nav,setView,showAll,toggleAll}){
 }
 /* ---------- Excel export helper ---------- */
 // ---- Invoice PDF (proper GST tax invoice / Bill of Supply) ----
-function invoicePDF(inv, company, customerName){
+async function invoicePDF(inv, company, customerName){
   const isComp = !!inv.comp || company?.scheme==="composite";
-  const doc = new jsPDF({unit:"mm", format:"a4"});
+  let JsPDFCtor; try{ JsPDFCtor=await getJsPDF(); }catch{ alert("PDF library load aagala — internet check pannunga."); return; }
+  const doc = new JsPDFCtor({unit:"mm", format:"a4"});
   const W = 210, M = 14; let y = 16;
   const money = n => "Rs " + (Math.round((+n||0)*100)/100).toLocaleString("en-IN");
   const line = (yy)=>{doc.setDrawColor(180);doc.line(M,yy,W-M,yy);};
