@@ -2553,6 +2553,8 @@ function FullSale({db,save,log,notify,flash,branch,company}){
   const [mode,setMode]=useState("Cash");
   const [custId,setCustId]=useState("");
   const [addParty,setAddParty]=useState(false);
+  const [custQ,setCustQ]=useState("");
+  const [custOpen,setCustOpen]=useState(false);
   const [np,setNp]=useState({name:"",phone:""});
   const [supply,setSupply]=useState("local");
   const [rows,setRows]=useState([blankRow(),blankRow()]);
@@ -2647,11 +2649,25 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     <Card>
       <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8}}>
         <div>
-          <select style={inp(0)} value={custId} onChange={e=>e.target.value==="__add"?setAddParty(true):setCustId(e.target.value)}>
-            <option value="">{mode==="Credit"?"Customer * (Credit)":"Walk-in / select customer"}</option>
-            <option value="__add">➕ Add Party</option>
-            {db.customers.map(c=><option key={c.id} value={c.id}>{c.name} — Bal {inr(custBal(c.id))}</option>)}
-          </select>
+          <div style={{position:"relative"}}>
+            <input style={inp(0)} placeholder={mode==="Credit"?"Customer * (Credit) — type to search":"Walk-in / type to search customer"}
+              value={custId?db.customers.find(c=>c.id===custId)?.name||"":custQ}
+              onChange={e=>{setCustQ(e.target.value);setCustId("");setCustOpen(true);}}
+              onFocus={()=>setCustOpen(true)}
+              onBlur={()=>setTimeout(()=>setCustOpen(false),150)}/>
+            {custOpen&&custQ.trim()&&<div style={{position:"absolute",zIndex:30,background:T.panel,border:`1px solid ${T.line}`,borderRadius:8,width:"100%",maxHeight:220,overflowY:"auto",boxShadow:"0 4px 12px rgba(20,30,60,.12)"}}>
+              <button onMouseDown={()=>{setAddParty(true);setCustOpen(false);}}
+                style={{display:"block",width:"100%",background:"transparent",border:"none",padding:"8px 10px",textAlign:"left",cursor:"pointer",color:T.acc,fontWeight:700,fontSize:12.5,borderBottom:`1px solid ${T.line}`}}>➕ Add Party</button>
+              {db.customers.filter(c=>c.name.toLowerCase().includes(custQ.trim().toLowerCase())).slice(0,8).map(c=>(
+                <button key={c.id} onMouseDown={()=>{setCustId(c.id);setCustQ("");setCustOpen(false);}}
+                  style={{display:"flex",width:"100%",background:"transparent",border:"none",padding:"8px 10px",cursor:"pointer",fontSize:12.5,gap:8,alignItems:"center"}}>
+                  <span style={{flex:1,textAlign:"left",color:T.text}}>{c.name}</span>
+                  <span style={{fontSize:11,color:custBal(c.id)>0?T.acc2:T.dim}}>Bal {inr(custBal(c.id))}</span>
+                </button>))}
+              {db.customers.filter(c=>c.name.toLowerCase().includes(custQ.trim().toLowerCase())).length===0&&
+                <div style={{padding:"8px 10px",fontSize:12,color:T.dim}}>No match — Add Party mேlே click pannunga.</div>}
+            </div>}
+          </div>
           {custId&&<div style={{fontSize:11,color:custBal(custId)>0?T.danger:T.ok,marginTop:3}}>BAL: {inr(custBal(custId))}</div>}
         </div>
         <select style={inp(0)} value={supply} onChange={e=>setSupply(e.target.value)}>
