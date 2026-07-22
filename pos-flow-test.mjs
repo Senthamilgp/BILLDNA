@@ -1,3 +1,4 @@
+globalThis.__BILLDNA_TEST__=true;
 // Simulate full POS billing flow with DOM events
 import { JSDOM } from "jsdom";
 const dom = new JSDOM('<div id="root"></div>', { url: "https://localhost" });
@@ -19,7 +20,8 @@ const wait=()=>act(async()=>{await new Promise(r=>setTimeout(r,50));});
 await act(async()=>{root.render(React.createElement(App));});
 await wait();
 
-// LOGIN
+// LOGIN (offline mode)
+await act(async()=>{click(btnByText("Offline"));}); await wait();
 type($$("input")[1],"1234");
 await act(async()=>{click(btnByText("Sign in"));});
 await wait();

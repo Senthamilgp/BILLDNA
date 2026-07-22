@@ -1,3 +1,4 @@
+globalThis.__BILLDNA_TEST__=true;
 // ================================================================
 // CoderGem SHADOW VERIFICATION — BillDNA v1.0
 // Independent shadow model built ONLY from scripted user actions +
@@ -47,6 +48,7 @@ const shadowReturn=idx=>{S.invoices[idx].items.forEach(i=>S.stock[i.n]+=i.q);};
 
 await wait(150);
 section("PHASE 1-4: EVENT CAPTURE + SHADOW STATE (guided flow)");
+await act(async()=>click(btn("Offline")));await wait();
 setVal($$("input")[1],"0000");await act(async()=>click(btn("Sign in")));await wait();
 t("wrong PIN rejected",body().includes("incorrect"));
 setVal($$("input")[1],"1234");await act(async()=>click(btn("Sign in")));await wait();
@@ -219,6 +221,7 @@ await act(async()=>{root.unmount();});
 root=createRoot(document.getElementById("root"));
 await act(async()=>{root.render(React.createElement(App));});
 await wait(150);
+await act(async()=>click(btn("Offline")));await wait();
 setVal($$("input")[1],"1234");await act(async()=>click(btn("Sign in")));await wait();
 t("restart: data persisted (company shown)",body().includes("Sree Dynamics"));
 t("restart: invoice count intact",db().invoices.length===S.invoices.length);
@@ -226,6 +229,7 @@ t("restart: invoice count intact",db().invoices.length===S.invoices.length);
 section("PHASE 9: SECURITY — authz + session");
 await act(async()=>click(btn("Logout")));await wait();
 t("logout → login screen",body().includes("Sign in"));
+await act(async()=>click(btn("Offline")));await wait();
 setVal($$("input")[0],"c1@sd.in");setVal($$("input")[1],"5555");
 await act(async()=>click(btn("Sign in")));await wait();
 const navText=$$("button").map(b=>b.textContent).join("|");

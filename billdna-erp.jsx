@@ -11,6 +11,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
    ============================================================ */
 
 import * as XLSX from "xlsx";
+import { supa, signIn, signUp, signOut, onAuth, currentUser, pullFromCloud, pushToCloud, schedulePush, subscribeRealtime, captureLead } from "./sync.js";
 const T = { bg:"#FFFFFF", panel:"#FFFFFF", panel2:"#F4F4F4", line:"#D6D6D6", text:"#000000", dim:"#6B6B6B", acc:"#000000", acc2:"#E8730C", danger:"#E8730C", ok:"#000000" };
 const PERMS = ["billing","purchase","inventory","accounting","reports","masters","settings","users"];
 const ROLE_PRESETS = { Owner:PERMS, Manager:["billing","purchase","inventory","reports","masters"], Cashier:["billing"], Accountant:["accounting","reports"] };
@@ -38,6 +39,8 @@ export default function BillDNA(){
   const [toast,setToast]=useState(null);
   const [narrow,setNarrow]=useState(typeof window!=="undefined"&&window.innerWidth<720);
   const [profileOpen,setProfileOpen]=useState(false);
+  const [cloudUser,setCloudUser]=useState(null);
+  const [syncMsg,setSyncMsg]=useState("");
   const toastTimer=useRef(null);
   useEffect(()=>{const on=()=>setNarrow(window.innerWidth<720);window.addEventListener("resize",on);return()=>window.removeEventListener("resize",on);},[]);
 
@@ -54,7 +57,28 @@ export default function BillDNA(){
     setDb(seed());
   })();},[]);
 
-  const save=useCallback(async next=>{setDb(next);try{await window.storage.set(KEY,JSON.stringify(next));}catch(e){console.error(e);}},[]);
+  const save=useCallback(async next=>{setDb(next);try{await window.storage.set(KEY,JSON.stringify(next));}catch(e){console.error(e);}
+    if(cloudUser)schedulePush(cloudUser);},[cloudUser]);
+
+  // cloud auth + sync wiring
+  useEffect(()=>{
+    let unsubRT=()=>{};
+    (async()=>{
+      const u=await currentUser();
+      if(u){setCloudUser(u);
+        const pulled=await pullFromCloud(u);
+        if(pulled){setDb(pulled);}
+        unsubRT=subscribeRealtime(u,async()=>{const p=await pullFromCloud(u);if(p)setDb(p);});
+      }
+    })();
+    const {data:sub}=onAuth(async(u)=>{
+      setCloudUser(u);
+      if(u){const p=await pullFromCloud(u);if(p)setDb(p);
+        unsubRT();unsubRT=subscribeRealtime(u,async()=>{const q=await pullFromCloud(u);if(q)setDb(q);});
+      }else{unsubRT();unsubRT=()=>{};}
+    });
+    return()=>{sub?.subscription?.unsubscribe?.();unsubRT();};
+  },[]); // eslint-disable-line
   const log=(d,action)=>{d.logs=[{id:uid(),ts:Date.now(),user:session?.name||"System",action},...d.logs].slice(0,300);};
   const notify=(d,msg)=>{d.notifications=[{id:uid(),msg,ts:Date.now(),read:false},...d.notifications].slice(0,150);};
   const flash=m=>{setToast(m);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(null),2200);};
@@ -116,7 +140,8 @@ export default function BillDNA(){
         {lowStock.length>0&&<div style={{fontSize:11,color:T.acc2}}>⚠ {lowStock.length} low stock</div>}
         <button onClick={()=>setProfileOpen(true)} style={{...btn(T.panel2),fontSize:12,color:T.text}}>{company?company.name:"⚙ Setup"} ▾</button>
         <div style={{fontSize:12,color:T.dim}}>{session.name} · {session.role}</div>
-        <button onClick={()=>setSession(null)} style={btn(T.panel2)}>Logout</button>
+        {cloudUser&&<span style={{fontSize:10.5,color:T.dim,border:`1px solid ${T.line}`,borderRadius:12,padding:"2px 8px"}}>☁ {navigator.onLine?"Synced":"Offline"}</span>}
+        <button onClick={async()=>{if(cloudUser){await signOut();setCloudUser(null);}setSession(null);}} style={btn(T.panel2)}>Logout</button>
       </div>
       <div style={{display:"flex",flex:1,minHeight:0}}>
         {!narrow&&<div style={{width:200,borderRight:`1px solid ${T.line}`,padding:10,display:"flex",flexDirection:"column",gap:3,background:T.panel,overflowY:"auto"}}>
@@ -176,19 +201,54 @@ export default function BillDNA(){
 
 const totalStock=p=>Object.values(p.stock||{}).reduce((a,b)=>a+b,0);
 
-/* ---------- Login ---------- */
+/* ---------- Login (cloud auth + offline PIN) ---------- */
 function Login({db,onLogin}){
-  const [email,setEmail]=useState("admin@billdna.in");const [pin,setPin]=useState("");const [err,setErr]=useState("");
-  const go=()=>{const u=db.users.find(x=>x.email.toLowerCase()===email.trim().toLowerCase()&&x.pin===pin&&x.active);
+  const [mode,setMode]=useState("cloud"); // cloud | offline
+  const [tab,setTab]=useState("in");      // in | up
+  const [email,setEmail]=useState("");const [pw,setPw]=useState("");
+  const [pin,setPin]=useState("");const [err,setErr]=useState("");const [busy,setBusy]=useState(false);const [msg,setMsg]=useState("");
+
+  const offlineGo=()=>{const u=db.users.find(x=>x.email.toLowerCase()===(email||"admin@billdna.in").trim().toLowerCase()&&x.pin===pin&&x.active);
     if(u)onLogin(u);else setErr("Email or PIN incorrect. Default: admin@billdna.in / 1234");};
+
+  const cloudGo=async()=>{
+    setErr("");setMsg("");if(!email.trim()||pw.length<6){setErr("Email + 6+ char password venum");return;}
+    setBusy(true);
+    try{
+      const {error}=tab==="up"?await signUp(email.trim(),pw):await signIn(email.trim(),pw);
+      if(error){setErr(error.message);}
+      else if(tab==="up"){setMsg("Account created! Email verify pannitu Sign in pannunga.");setTab("in");}
+      else{onLogin(db.users[0]);} // enter app; cloud sync effect pulls data
+    }catch(e){setErr(e.message||"Network error");}
+    setBusy(false);
+  };
+
   return(<div style={{background:T.bg,minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"system-ui"}}>
-    <div style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:28,width:320}}>
+    <div style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:28,width:340}}>
       <div style={{fontWeight:800,fontSize:26,color:T.text,marginBottom:4}}>Bill<span style={{color:T.acc}}>DNA</span></div>
-      <div style={{color:T.dim,fontSize:12,marginBottom:18}}>SME ERP · Billing made simple</div>
-      <input style={inp()} placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/>
-      <input style={inp()} placeholder="PIN" type="password" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
-      {err&&<div style={{color:T.danger,fontSize:12,marginBottom:8}}>{err}</div>}
-      <button onClick={go} style={{...btn(T.acc),width:"100%",color:"#fff",fontWeight:800,padding:10}}>Sign in</button>
+      <div style={{color:T.dim,fontSize:12,marginBottom:16}}>SME ERP · Billing made simple</div>
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        <button onClick={()=>{setMode("cloud");setErr("");}} style={{...btn(mode==="cloud"?T.acc:T.panel2),color:mode==="cloud"?"#fff":T.text,fontWeight:700,flex:1,fontSize:12}}>☁ Cloud login</button>
+        <button onClick={()=>{setMode("offline");setErr("");}} style={{...btn(mode==="offline"?T.acc:T.panel2),color:mode==="offline"?"#fff":T.text,fontWeight:700,flex:1,fontSize:12}}>📴 Offline</button>
+      </div>
+      {mode==="cloud"?<>
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          {[["in","Sign in"],["up","Sign up"]].map(([k,l])=>(
+            <button key={k} onClick={()=>{setTab(k);setErr("");setMsg("");}} style={{...btn(tab===k?T.panel2:"transparent"),color:T.text,fontWeight:tab===k?700:500,flex:1,fontSize:12,border:`1px solid ${tab===k?T.text:T.line}`}}>{l}</button>))}
+        </div>
+        <input style={inp()} placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <input style={inp()} placeholder="Password (6+)" type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&cloudGo()}/>
+        {err&&<div style={{color:T.danger,fontSize:12,marginBottom:8}}>{err}</div>}
+        {msg&&<div style={{color:T.text,fontSize:12,marginBottom:8}}>{msg}</div>}
+        <button onClick={cloudGo} disabled={busy} style={{...btn(T.acc),width:"100%",color:"#fff",fontWeight:800,padding:10}}>{busy?"...":(tab==="up"?"Create account":"Sign in")}</button>
+        <div style={{color:T.dim,fontSize:10.5,marginTop:10}}>Cloud login = mobile + PC sync, data safe online.</div>
+      </>:<>
+        <input style={inp()} placeholder="Email (default admin@billdna.in)" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <input style={inp()} placeholder="PIN" type="password" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&offlineGo()}/>
+        {err&&<div style={{color:T.danger,fontSize:12,marginBottom:8}}>{err}</div>}
+        <button onClick={offlineGo} style={{...btn(T.acc),width:"100%",color:"#fff",fontWeight:800,padding:10}}>Sign in</button>
+        <div style={{color:T.dim,fontSize:10.5,marginTop:10}}>Offline = idha device-la mattum, no sync. Default admin@billdna.in / 1234.</div>
+      </>}
     </div></div>);
 }
 
