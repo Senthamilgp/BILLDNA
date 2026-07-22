@@ -1102,6 +1102,7 @@ const supName=(db,id)=>db.suppliers.find(s=>s.id===id)?.name||"—";
 /* ---------- GST & Tax Reports (P7) ---------- */
 function GstReports({db,company,flash}){
   const isComp=company?.scheme==="composite";
+  const isNoTax=company?.scheme==="notax";
   const compRate=company?.compRate||1;
   const [tab,setTab]=useState("gstr1");
   const [month,setMonth]=useState(new Date().toISOString().slice(0,7));
@@ -1195,6 +1196,10 @@ function GstReports({db,company,flash}){
           <span>{l}</span><span>{v}</span></div>))}
       <div style={{fontSize:11,color:T.dim,marginTop:8}}>Note: composition dealer tax vasool panna mudiyathu; idhu ungal own liability. Bills = Bill of Supply. CA verify pannuvaanga.</div>
     </Card>
+  </div>);
+  if(isNoTax)return(<div>
+    <H1>GST Reports</H1>
+    <Card><div style={{fontSize:13,color:T.acc2}}>⚠ This company is on <b>No Tax</b> scheme (unregistered dealer) — no GST is collected or filed. GSTR/CMP-08 reports not applicable. Switch scheme in Company → Edit if this changes.</div></Card>
   </div>);
     return(<div>
     <H1>GST Reports</H1>
@@ -2350,6 +2355,8 @@ function MoreGrid({nav,setView,showAll,toggleAll}){
 // ---- Invoice PDF (proper GST tax invoice / Bill of Supply) ----
 async function invoicePDF(inv, company, customerName){
   const isComp = !!inv.comp || company?.scheme==="composite";
+  const isNoTax = !!inv.noTax || company?.scheme==="notax";
+  const simpleCols = isComp || isNoTax; // hide HSN/GST columns
   let JsPDFCtor; try{ JsPDFCtor=await getJsPDF(); }catch{ alert("PDF library load aagala — internet check pannunga."); return; }
   const doc = new JsPDFCtor({unit:"mm", format:"a4"});
   const W = 210, M = 14; let y = 16;
@@ -2373,7 +2380,7 @@ async function invoicePDF(inv, company, customerName){
   // Title band
   y += 2; line(y); y += 7;
   doc.setFont("helvetica","bold"); doc.setFontSize(13);
-  doc.text(isComp ? "BILL OF SUPPLY" : "TAX INVOICE", W/2, y, {align:"center"});
+  doc.text(isComp ? "BILL OF SUPPLY" : isNoTax ? "CASH BILL" : "TAX INVOICE", W/2, y, {align:"center"});
   y += 7; line(y); y += 7;
 
   // Bill-to + meta
@@ -2389,7 +2396,7 @@ async function invoicePDF(inv, company, customerName){
   y += 6;
 
   // Table header
-  const cols = isComp
+  const cols = simpleCols
     ? [["#",M,8],["Item",M+10,74],["Qty",M+86,16],["Rate",M+104,26],["Amount",W-M-26,26]]
     : [["#",M,8],["Item",M+10,58],["HSN",M+70,16],["Qty",M+88,12],["Rate",M+102,22],["GST%",M+126,16],["Amount",W-M-28,28]];
   doc.setFillColor(238); doc.rect(M, y-4, W-2*M, 7, "F");
@@ -2401,7 +2408,7 @@ async function invoicePDF(inv, company, customerName){
   (inv.items||[]).forEach((it,i)=>{
     if(y > 250){ doc.addPage(); y = 20; }
     const amt = (+it.rate||0)*(+it.qty||0);
-    if(isComp){
+    if(simpleCols){
       doc.text(String(i+1), M, y);
       doc.text(String(it.name||"").slice(0,42), M+10, y);
       doc.text(String(it.qty)+" "+(it.unit||""), M+86+16, y, {align:"right"});
@@ -2425,7 +2432,7 @@ async function invoicePDF(inv, company, customerName){
   const trow=(label,val,bold)=>{ doc.setFont("helvetica", bold?"bold":"normal"); doc.setFontSize(bold?10:9);
     doc.text(label, tx, y); doc.text(money(val), vx, y, {align:"right"}); y += bold?6.5:5; };
   trow("Subtotal", inv.sub);
-  if(!isComp && +inv.tax>0){
+  if(!isComp && !isNoTax && +inv.tax>0){
     if(inv.igst) trow("IGST", inv.tax);
     else { trow("CGST", inv.tax/2); trow("SGST", inv.tax/2); }
   }
@@ -2528,6 +2535,7 @@ function WhatsAppCenter({db,save,log,flash,company}){
 /* ---------- Full Sale (B2B invoice form, v2.2) ---------- */
 function FullSale({db,save,log,notify,flash,branch,company}){
   const isComp=company?.scheme==="composite";
+  const isNoTax=company?.scheme==="notax";
   const compRate=company?.compRate||1;
   const blankRow=()=>({id:uid(),q:"",pid:null,name:"",qty:1,unit:"pcs",rate:"",taxMode:"excl",gst:18});
   const [mode,setMode]=useState("Cash");
@@ -2547,7 +2555,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
   const custBal=id=>db.invoices.filter(i=>i.customerId===id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
   const upd=(id,k,v)=>setRows(rs=>rs.map(r=>r.id===id?{...r,[k]:v}:r));
   const pick=(id,p)=>setRows(rs=>rs.map(r=>r.id===id?{...r,q:"",pid:p.id,name:p.name,unit:p.unit,rate:p.price,gst:p.gst}:r));
-  const calc=r=>{const qty=+r.qty||0,rate=+r.rate||0,g=+r.gst||0;
+  const calc=r=>{const qty=+r.qty||0,rate=+r.rate||0,g=(isComp||isNoTax)?0:(+r.gst||0);
     const base=r.taxMode==="incl"?rate*qty/(1+g/100):rate*qty;
     const tax=base*g/100;return{base,tax,amt:base+tax};};
   const live=rows.filter(r=>r.name.trim()&&+r.rate>0&&+r.qty>0);
@@ -2588,6 +2596,10 @@ function FullSale({db,save,log,notify,flash,branch,company}){
       items:items.map(it=>({...it,gst:0})),sub:Math.round(sub*100)/100,tax:0,total:compTotal,
       paid:received===""?(mode==="Cash"?compTotal:0):Math.min(+received||0,compTotal),payMode,
       ts:Date.now(),branchId:branch?.id||null,returned:false,igst:false}
+      :isNoTax?{id:uid(),no,type:"GST Invoice",billType:"Cash Bill",noTax:true,customerId:custId||null,
+      items:items.map(it=>({...it,gst:0,hsn:""})),sub:Math.round(sub*100)/100,tax:0,total:compTotal,
+      paid:received===""?(mode==="Cash"?compTotal:0):Math.min(+received||0,compTotal),payMode,
+      ts:Date.now(),branchId:branch?.id||null,returned:false,igst:false}
       :{id:uid(),no,type:"GST Invoice",customerId:custId||null,items,
       sub:Math.round(sub*100)/100,tax:Math.round((tax+rDiff)*100)/100,total,paid,payMode,
       ts:Date.now(),branchId:branch?.id||null,returned:false,igst:supply==="inter"};
@@ -2602,7 +2614,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     if(waCust?.phone&&(d.settings?.waAuto?.invoice!==false)){
       d.waQueue=d.waQueue||[];
       d.waQueue.unshift({id:uid(),key:`inv-${no}`,ts:Date.now(),type:"Invoice",phone:waCust.phone,name:waCust.name,
-        text:`*${company?.name||"Bill"}*\n${isComp?"Bill of Supply":(supply==="inter"?"Tax Invoice (IGST)":"Tax Invoice")} ${no}\nTotal: ${inr(isComp?(roundOff?Math.round(sub):sub):total)}${balance>0?`\nBalance: ${inr(balance)}`:"\nPaid ✓"}\nNandri! 🙏`,sent:false});
+        text:`*${company?.name||"Bill"}*\n${isComp?"Bill of Supply":isNoTax?"Cash Bill":(supply==="inter"?"Tax Invoice (IGST)":"Tax Invoice")} ${no}\nTotal: ${inr((isComp||isNoTax)?(roundOff?Math.round(sub):sub):total)}${balance>0?`\nBalance: ${inr(balance)}`:"\nPaid ✓"}\nNandri! 🙏`,sent:false});
     }
     log(d,`Full Sale ${no} — ${inr(total)} (${payMode}${supply==="inter"?", IGST":""})`);
     save(d);flash(`${no} saved`);
@@ -2644,8 +2656,8 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     </Card>
     <Card>
       <div style={{overflowX:"auto"}}>
-        <div style={{display:"grid",gridTemplateColumns:"minmax(160px,2fr) 64px 70px 90px 110px 90px 90px 30px",gap:0,minWidth:720}}>
-          {["ITEM","QTY","UNIT","PRICE/UNIT","TAX MODE","GST %","AMOUNT",""].map(h=><div key={h} style={th}>{h}</div>)}
+        <div style={{display:"grid",gridTemplateColumns:(isComp||isNoTax)?"minmax(160px,2fr) 64px 70px 110px 90px 30px":"minmax(160px,2fr) 64px 70px 90px 110px 90px 90px 30px",gap:0,minWidth:(isComp||isNoTax)?560:720}}>
+          {((isComp||isNoTax)?["ITEM","QTY","UNIT","PRICE/UNIT","AMOUNT",""]:["ITEM","QTY","UNIT","PRICE/UNIT","TAX MODE","GST %","AMOUNT",""]).map(h=><div key={h} style={th}>{h}</div>)}
           {rows.map(r=>{const c=calc(r);
             const sugg=r.q?db.products.filter(p=>p.name.toLowerCase().includes(r.q.toLowerCase())).slice(0,5):[];
             return(<React.Fragment key={r.id}>
@@ -2665,10 +2677,10 @@ function FullSale({db,save,log,notify,flash,branch,company}){
               <div style={{padding:3}}><select style={inp(0)} value={r.unit} onChange={e=>upd(r.id,"unit",e.target.value)}>
                 {["pcs","kg","sqft","mtr","ltr","box","set","nos"].map(u=><option key={u}>{u}</option>)}</select></div>
               <div style={{padding:3}}><input style={inp(0)} type="number" placeholder="0" value={r.rate} onChange={e=>upd(r.id,"rate",e.target.value)}/></div>
-              <div style={{padding:3}}><select style={inp(0)} value={r.taxMode} onChange={e=>upd(r.id,"taxMode",e.target.value)}>
-                <option value="excl">Without Tax</option><option value="incl">With Tax</option></select></div>
-              <div style={{padding:3}}><select style={inp(0)} value={r.gst} onChange={e=>upd(r.id,"gst",e.target.value)}>
-                {GST_RATES.map(g=><option key={g} value={g}>GST {g}%</option>)}</select></div>
+              {!isComp&&!isNoTax&&<div style={{padding:3}}><select style={inp(0)} value={r.taxMode} onChange={e=>upd(r.id,"taxMode",e.target.value)}>
+                <option value="excl">Without Tax</option><option value="incl">With Tax</option></select></div>}
+              {!isComp&&!isNoTax&&<div style={{padding:3}}><select style={inp(0)} value={r.gst} onChange={e=>upd(r.id,"gst",e.target.value)}>
+                {GST_RATES.map(g=><option key={g} value={g}>GST {g}%</option>)}</select></div>}
               <div style={{padding:"10px 6px",fontSize:13,textAlign:"right",fontWeight:600}}>{c.amt?inr(c.amt):"—"}</div>
               <button onClick={()=>setRows(rs=>rs.length>1?rs.filter(x=>x.id!==r.id):rs)} style={{background:"transparent",border:"none",color:T.danger,cursor:"pointer"}}>🗑</button>
             </React.Fragment>);})}
@@ -2690,7 +2702,8 @@ function FullSale({db,save,log,notify,flash,branch,company}){
       </Card>
       <Card>
         <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:T.dim}}><span>Subtotal</span><span>{inr(sub)}</span></div>
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:T.dim}}><span>{supply==="inter"?"IGST":"CGST+SGST"}</span><span>{inr(tax)}</span></div>
+        {!isComp&&!isNoTax&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:T.dim}}><span>{supply==="inter"?"IGST":"CGST+SGST"}</span><span>{inr(tax)}</span></div>}
+        {isNoTax&&<div style={{fontSize:11,color:T.dim,marginBottom:2}}>No Tax bill — GST not applicable</div>}
         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.dim,margin:"4px 0"}}>
           <input type="checkbox" checked={roundOff} onChange={e=>setRoundOff(e.target.checked)} style={{accentColor:T.acc}}/>Round off {rDiff!==0&&roundOff?`(${rDiff>0?"+":""}${rDiff})`:""}</div>
         <div style={{display:"flex",justifyContent:"space-between",fontSize:19,fontWeight:800,color:T.acc,margin:"4px 0"}}><span>Total</span><span>{inr(total)}</span></div>
@@ -2758,7 +2771,7 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
       <div style={{padding:"0 16px 24px"}}>
         {tab==="view"&&cur&&<Card>
           <div style={{fontWeight:800,fontSize:17,marginBottom:8}}>{cur.name}</div>
-          {row("Scheme", cur.scheme==="composite"?`Composition (${cur.compRate||1}%)`:"Regular GST")}
+          {row("Scheme", cur.scheme==="composite"?`Composition (${cur.compRate||1}%)`:cur.scheme==="notax"?"No Tax (unregistered)":"Regular GST")}
           {row("GSTIN", cur.gstin)}{row("Email", cur.email)}{row("Mobile", cur.phone)}
           {row("Address", cur.address)}{row("City", cur.city)}{row("State", cur.state)}
           {row("Branches", cur.branches.map(b=>b.name).join(", "))}
@@ -2770,7 +2783,7 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
           <div style={{marginBottom:8}}>
             <div style={{fontSize:11,color:T.dim,marginBottom:4}}>GST Scheme *</div>
             <div style={{display:"flex",gap:8}}>
-              {[["regular","Regular GST"],["composite","Composition"]].map(([v,l])=>(
+              {[["regular","Regular GST"],["composite","Composition"],["notax","No Tax"]].map(([v,l])=>(
                 <button key={v} onClick={()=>set("scheme",v)} style={{...btn(f.scheme===v?T.acc:T.panel2),color:f.scheme===v?"#fff":T.text,fontWeight:700,flex:1,fontSize:12.5}}>{l}</button>))}
             </div>
             {f.scheme==="composite"&&<div style={{marginTop:8}}>
@@ -2781,6 +2794,7 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
               </div>
               <div style={{fontSize:10.5,color:T.acc2,marginTop:6}}>⚠ Composition: Bill of Supply · no tax from customer · intra-state only · CMP-08</div>
             </div>}
+            {f.scheme==="notax"&&<div style={{fontSize:10.5,color:T.acc2,marginTop:6}}>⚠ No Tax: plain Cash/Sale Bill · no GST breakup · GSTIN not required · for unregistered/non-GST customers</div>}
           </div>
           {field("GSTIN","gstin","33ABCDE1234F1Z5")}
           {field("Email","email","business@email.com")}
