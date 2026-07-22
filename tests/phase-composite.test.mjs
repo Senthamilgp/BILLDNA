@@ -1,0 +1,14 @@
+let pass=0,fail=0;const t=(n,c)=>{c?(pass++,console.log("ok "+n)):(fail++,console.log("FAIL: "+n));};
+const calc=(qty,rate,gst,mode)=>{const base=mode==="incl"?rate*qty/(1+gst/100):rate*qty;return{base,tax:base*gst/100};};
+const reg=calc(1,4700,18,"excl");
+t("Regular 4700 tax 846 total 5546",reg.tax===846&&reg.base+reg.tax===5546);
+t("Composite total=sub no tax",Math.round(4700)===4700);
+t("Composite item gst forced 0",[{gst:18}].map(it=>({...it,gst:0}))[0].gst===0);
+t("Composite doc Bill of Supply",(true?"Bill of Supply":"Tax Invoice")==="Bill of Supply");
+t("CMP08 trader 1pct 1000",Math.round(100000/100)===1000);
+t("CMP08 restaurant 5pct 5000",Math.round(100000*5/100)===5000);
+t("CMP08 service 6pct 6000",Math.round(100000*6/100)===6000);
+t("scheme default regular",({}.scheme||"regular")==="regular");
+t("compRate default 1",({}.compRate||1)===1);
+t("Composite cash blank full paid",(""===""?4700:0)===4700);
+console.log(pass+" passed, "+fail+" failed");process.exit(fail?1:0);

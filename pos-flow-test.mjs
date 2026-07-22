@@ -23,7 +23,7 @@ await wait();
 type($$("input")[1],"1234");
 await act(async()=>{click(btnByText("Sign in"));});
 await wait();
-console.log("1. Logged in:", document.body.textContent.includes("Quick Bill"));
+console.log("1. Logged in:", document.body.textContent.includes("Receipt"));
 
 // ADD PRODUCT
 await act(async()=>{click(btnByText("Products"));}); await wait();
@@ -33,8 +33,9 @@ type(inputs.find(i=>i.placeholder==="Selling ₹ *"),"10");
 await act(async()=>{click(btnByText("Save product"));}); await wait();
 console.log("2. Product saved:", document.body.textContent.includes("Tea"));
 
-// POS
-await act(async()=>{click(btnByText("POS Billing"));}); await wait();
+// POS (reveal via All features toggle)
+await act(async()=>{click(btnByText("All features"));}); await wait();
+await act(async()=>{click(btnByText("Quick Bill (POS)"));}); await wait();
 const search=$$("input").find(i=>i.placeholder.includes("Scan"));
 type(search,"Tea"); await wait();
 const suggestion=$$("button").find(b=>b.textContent.includes("Tea —"));

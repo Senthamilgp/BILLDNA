@@ -83,6 +83,7 @@ export default function BillDNA(){
     ["companies","🏢 Setup",can("settings")],
     ["backup","💾 Backup",can("settings")],
     ...(showAll?[
+      ["pos","🧾 Quick Bill (POS)",can("billing")],
       ["inventory","🏬 Inventory",can("inventory")],
       ["accounting","📒 Accounting",can("accounting")],
       ["crm","🤝 CRM",can("billing")||can("masters")],
@@ -697,7 +698,7 @@ function Companies({db,save,log,notify,flash}){
     const c={id:uid(),name:name.trim(),gstin:gstin.trim().toUpperCase(),city:city.trim(),email:"",phone:"",address:"",state:"",branches:[{id:uid(),name:"Main Branch",city:city.trim()}]};
     d.companies.push(c);
     if(!d.activeCompanyId){d.activeCompanyId=c.id;d.activeBranchId=c.branches[0].id;}
-    log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created`);
+    log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created (${c.scheme==="composite"?"Composition "+c.compRate+"%":"Regular GST"})`);
     save(d);setName("");setGstin("");setCity("");setSel(c.id);flash("Company created");
   };
   const addBranch=()=>{
@@ -954,6 +955,8 @@ const supName=(db,id)=>db.suppliers.find(s=>s.id===id)?.name||"—";
 
 /* ---------- GST & Tax Reports (P7) ---------- */
 function GstReports({db,company,flash}){
+  const isComp=company?.scheme==="composite";
+  const compRate=company?.compRate||1;
   const [tab,setTab]=useState("gstr1");
   const [month,setMonth]=useState(new Date().toISOString().slice(0,7));
 
@@ -1026,7 +1029,28 @@ function GstReports({db,company,flash}){
   const th={fontSize:11,color:T.dim,fontWeight:700,padding:"4px 0"};
   const td={fontSize:12.5,padding:"5px 0",borderBottom:`1px solid ${T.line}`};
 
-  return(<div>
+  const compTurnover=db.invoices.filter(i=>i.type.includes("Invoice")&&!i.returned&&new Date(i.ts).toISOString().slice(0,7)===month)
+    .reduce((a,i)=>a+(i.sub||i.total),0);
+  const compTax=Math.round(compTurnover*compRate/100*100)/100;
+  const cmpExport=()=>{const b=new Blob([JSON.stringify({gstin:company?.gstin||"",period:month,scheme:"composition",rate:compRate+"%",turnover:compTurnover,taxPayable:compTax},null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`CMP08-${month}.json`;a.click();flash("CMP-08 exported");};
+  if(isComp)return(<div>
+    <H1>GST Reports · Composition</H1>
+    <Card><div style={{fontSize:13,color:T.acc2,marginBottom:4}}>⚠ Composition scheme ({compRate}%) — GSTR-1/3B apply aagathu. Quarterly CMP-08 + annual GSTR-4 dhaan.</div></Card>
+    <div style={{display:"flex",gap:8,margin:"12px 0",alignItems:"center"}}>
+      <div style={{fontWeight:700}}>CMP-08 Summary</div>
+      <input type="month" style={{...inp(0),width:150,marginLeft:"auto"}} value={month} onChange={e=>setMonth(e.target.value)}/>
+      <button onClick={cmpExport} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ Export</button>
+      <button onClick={()=>window.print()} style={btn(T.panel2)}>🖨 PDF</button>
+    </div>
+    <Card>
+      {[["Total turnover (outward supplies)",inr(compTurnover)],["Composition rate",compRate+"%"],["Tax payable (CMP-08)",inr(compTax)]].map(([l,v])=>(
+        <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"8px 0",borderBottom:`1px solid ${T.line}`,fontWeight:l.includes("payable")?800:400,color:l.includes("payable")?T.acc2:T.text}}>
+          <span>{l}</span><span>{v}</span></div>))}
+      <div style={{fontSize:11,color:T.dim,marginTop:8}}>Note: composition dealer tax vasool panna mudiyathu; idhu ungal own liability. Bills = Bill of Supply. CA verify pannuvaanga.</div>
+    </Card>
+  </div>);
+    return(<div>
     <H1>GST Reports</H1>
     <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
       {TABS.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{...btn(tab===k?T.acc:T.panel2),color:tab===k?"#08221E":T.text,fontWeight:tab===k?700:400}}>{l}</button>)}
@@ -2257,6 +2281,8 @@ function WhatsAppCenter({db,save,log,flash,company}){
 
 /* ---------- Full Sale (B2B invoice form, v2.2) ---------- */
 function FullSale({db,save,log,notify,flash,branch,company}){
+  const isComp=company?.scheme==="composite";
+  const compRate=company?.compRate||1;
   const blankRow=()=>({id:uid(),q:"",pid:null,name:"",qty:1,unit:"pcs",rate:"",taxMode:"excl",gst:18});
   const [mode,setMode]=useState("Cash");
   const [custId,setCustId]=useState("");
@@ -2310,7 +2336,12 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     const payMode=mode==="Credit"?"Credit":payAcct==="Cash"?"Cash":"Bank";
     const items=live.map(r=>{const c=calc(r);return{pid:r.pid,name:r.name.trim(),qty:+r.qty,unit:r.unit,
       rate:Math.round(c.base/+r.qty*100)/100,gst:+r.gst,hsn:r.pid?(d.products.find(p=>p.id===r.pid)?.hsn||""):""};});
-    const inv={id:uid(),no,type:"GST Invoice",customerId:custId||null,items,
+    const compTotal=roundOff?Math.round(sub):Math.round(sub*100)/100;
+    const inv=isComp?{id:uid(),no,type:"GST Invoice",billType:"Bill of Supply",comp:true,compRate,customerId:custId||null,
+      items:items.map(it=>({...it,gst:0})),sub:Math.round(sub*100)/100,tax:0,total:compTotal,
+      paid:received===""?(mode==="Cash"?compTotal:0):Math.min(+received||0,compTotal),payMode,
+      ts:Date.now(),branchId:branch?.id||null,returned:false,igst:false}
+      :{id:uid(),no,type:"GST Invoice",customerId:custId||null,items,
       sub:Math.round(sub*100)/100,tax:Math.round((tax+rDiff)*100)/100,total,paid,payMode,
       ts:Date.now(),branchId:branch?.id||null,returned:false,igst:supply==="inter"};
     d.invoices.unshift(inv);
@@ -2324,7 +2355,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     if(waCust?.phone&&(d.settings?.waAuto?.invoice!==false)){
       d.waQueue=d.waQueue||[];
       d.waQueue.unshift({id:uid(),key:`inv-${no}`,ts:Date.now(),type:"Invoice",phone:waCust.phone,name:waCust.name,
-        text:`*${company?.name||"Bill"}*\n${supply==="inter"?"Tax Invoice (IGST)":"Tax Invoice"} ${no}\nTotal: ${inr(total)}${balance>0?`\nBalance: ${inr(balance)}`:"\nPaid ✓"}\nNandri! 🙏`,sent:false});
+        text:`*${company?.name||"Bill"}*\n${isComp?"Bill of Supply":(supply==="inter"?"Tax Invoice (IGST)":"Tax Invoice")} ${no}\nTotal: ${inr(isComp?(roundOff?Math.round(sub):sub):total)}${balance>0?`\nBalance: ${inr(balance)}`:"\nPaid ✓"}\nNandri! 🙏`,sent:false});
     }
     log(d,`Full Sale ${no} — ${inr(total)} (${payMode}${supply==="inter"?", IGST":""})`);
     save(d);flash(`${no} saved`);
@@ -2430,15 +2461,15 @@ function FullSale({db,save,log,notify,flash,branch,company}){
 function CompanyModal({db,save,log,notify,flash,onClose}){
   const cur=db.companies.find(c=>c.id===db.activeCompanyId);
   const [tab,setTab]=useState(cur?"view":"create");
-  const empty={name:"",gstin:"",email:"",phone:"",address:"",city:"",state:""};
-  const [f,setF]=useState(cur?{name:cur.name,gstin:cur.gstin||"",email:cur.email||"",phone:cur.phone||"",address:cur.address||"",city:cur.city||"",state:cur.state||""}:empty);
+  const empty={name:"",gstin:"",email:"",phone:"",address:"",city:"",state:"",scheme:"regular",compRate:1};
+  const [f,setF]=useState(cur?{name:cur.name,gstin:cur.gstin||"",email:cur.email||"",phone:cur.phone||"",address:cur.address||"",city:cur.city||"",state:cur.state||"",scheme:cur.scheme||"regular",compRate:cur.compRate||1}:empty);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
   const createCo=()=>{
     if(!f.name.trim())return flash("Company name required");
     const d=structuredClone(db);
     const c={id:uid(),name:f.name.trim(),gstin:f.gstin.trim().toUpperCase(),email:f.email.trim(),phone:f.phone.trim(),
-      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),branches:[{id:uid(),name:"Main Branch",city:f.city.trim()}]};
+      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),scheme:f.scheme,compRate:+f.compRate||1,branches:[{id:uid(),name:"Main Branch",city:f.city.trim()}]};
     d.companies.push(c);d.activeCompanyId=c.id;d.activeBranchId=c.branches[0].id;
     log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created`);
     save(d);flash("Company created");onClose();
@@ -2447,7 +2478,7 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
     if(!f.name.trim())return flash("Company name required");
     const d=structuredClone(db);const c=d.companies.find(x=>x.id===cur.id);
     Object.assign(c,{name:f.name.trim(),gstin:f.gstin.trim().toUpperCase(),email:f.email.trim(),phone:f.phone.trim(),
-      address:f.address.trim(),city:f.city.trim(),state:f.state.trim()});
+      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),scheme:f.scheme,compRate:+f.compRate||1});
     log(d,`Company edited: ${c.name}`);save(d);flash("Saved");onClose();
   };
   const switchCo=(cId)=>{const d=structuredClone(db);const c=d.companies.find(x=>x.id===cId);
@@ -2478,6 +2509,7 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
       <div style={{padding:"0 16px 24px"}}>
         {tab==="view"&&cur&&<Card>
           <div style={{fontWeight:800,fontSize:17,marginBottom:8}}>{cur.name}</div>
+          <Row l="Scheme" v={cur.scheme==="composite"?`Composition (${cur.compRate||1}%)`:"Regular GST"}/>
           <Row l="GSTIN" v={cur.gstin}/><Row l="Email" v={cur.email}/><Row l="Mobile" v={cur.phone}/>
           <Row l="Address" v={cur.address}/><Row l="City" v={cur.city}/><Row l="State" v={cur.state}/>
           <Row l="Branches" v={cur.branches.map(b=>b.name).join(", ")}/>
@@ -2486,6 +2518,21 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
         {(tab==="create"||tab==="edit")&&<Card>
           <div style={{fontWeight:700,marginBottom:10}}>{tab==="create"?"New company":"Edit company"}</div>
           <Field label="Company name *" k="name" ph="e.g. Sree Enterprises"/>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,color:T.dim,marginBottom:4}}>GST Scheme *</div>
+            <div style={{display:"flex",gap:8}}>
+              {[["regular","Regular GST"],["composite","Composition"]].map(([v,l])=>(
+                <button key={v} onClick={()=>set("scheme",v)} style={{...btn(f.scheme===v?T.acc:T.panel2),color:f.scheme===v?"#fff":T.text,fontWeight:700,flex:1,fontSize:12.5}}>{l}</button>))}
+            </div>
+            {f.scheme==="composite"&&<div style={{marginTop:8}}>
+              <div style={{fontSize:11,color:T.dim,marginBottom:4}}>Composition rate</div>
+              <div style={{display:"flex",gap:6}}>
+                {[[1,"1% Trade/Mfr"],[5,"5% Restaurant"],[6,"6% Service"]].map(([r,l])=>(
+                  <button key={r} onClick={()=>set("compRate",r)} style={{...btn(+f.compRate===r?T.acc2:T.panel2),color:+f.compRate===r?"#fff":T.text,fontWeight:600,flex:1,fontSize:11}}>{l}</button>))}
+              </div>
+              <div style={{fontSize:10.5,color:T.acc2,marginTop:6}}>⚠ Composition: Bill of Supply · no tax from customer · intra-state only · CMP-08</div>
+            </div>}
+          </div>
           <Field label="GSTIN" k="gstin" ph="33ABCDE1234F1Z5"/>
           <Field label="Email" k="email" ph="business@email.com"/>
           <Field label="Mobile" k="phone" ph="98765 43210"/>

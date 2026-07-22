@@ -50,12 +50,12 @@ section("PHASE 1-4: EVENT CAPTURE + SHADOW STATE (guided flow)");
 setVal($$("input")[1],"0000");await act(async()=>click(btn("Sign in")));await wait();
 t("wrong PIN rejected",body().includes("incorrect"));
 setVal($$("input")[1],"1234");await act(async()=>click(btn("Sign in")));await wait();
-t("login",body().includes("Quick Bill"));
+t("login",body().includes("Receipt"));
 await act(async()=>click(btn("All features")));await wait();
 t("all-features toggle works",body().includes("Simple mode"));
-await nav("Setup");
-setVal(ph("Company name"),"Sree Dynamics");setVal(ph("GSTIN"),"33ABCDE1234F1Z5");
-await act(async()=>click(btn("Create")));await wait();
+await act(async()=>click($$("button").find(b=>b.textContent.includes("Setup")&&b.textContent.includes("▾"))));await wait();
+setVal(ph("e.g. Sree Enterprises"),"Sree Dynamics");setVal(ph("33ABCDE1234F1Z5"),"33ABCDE1234F1Z5");
+await act(async()=>click($$("button").find(b=>b.textContent==="Create company")));await wait();
 t("company",body().includes("Sree Dynamics"));
 await nav("Users & Roles");
 setVal(ph("Name *"),"Cashier1");setVal(ph("Email *"),"c1@sd.in");setVal(ph("PIN *"),"5555");
@@ -107,7 +107,7 @@ await act(async()=>click(btnLast("Transfer")));await wait();
 await act(async()=>click($$("button").find(b=>b.textContent.trim()==="Stock")));await wait();
 t("transfer default:5 Godown:5",body().includes("default: 5")&&body().includes("Godown: 5"));
 // POS: bill1 Tea×2 cash; bill2 Tea×1 (for return)
-await nav("POS Billing");
+await nav("Quick Bill (POS)");
 const scan=ph("Scan barcode");
 const sell=async(nm,times)=>{for(let i=0;i<times;i++){setVal(scan,nm);await wait(30);
   await act(async()=>click($$("button").find(b=>b.textContent.includes(nm+" —"))));await wait(30);}
@@ -201,7 +201,7 @@ t("Σmoves == stock (all products)",["Tea","Sugar","Milk","Chai"].every(n=>{
   return appStock(n)===D.stockMoves.filter(m=>m.pid===p.id&&!m.wh.includes("→")).reduce((a,m)=>a+m.qty,0);}));
 
 section("PHASE 8: STRESS — 40 rapid bills + restart persistence");
-await nav("POS Billing");
+await nav("Quick Bill (POS)");
 for(let i=0;i<40;i++){
   setVal(ph("Scan barcode"),"Tea");await wait(15);
   await act(async()=>click($$("button").find(b=>b.textContent.includes("Tea —"))));await wait(10);
@@ -229,7 +229,7 @@ t("logout → login screen",body().includes("Sign in"));
 setVal($$("input")[0],"c1@sd.in");setVal($$("input")[1],"5555");
 await act(async()=>click(btn("Sign in")));await wait();
 const navText=$$("button").map(b=>b.textContent).join("|");
-t("Cashier: POS visible",navText.includes("POS Billing"));
+t("Cashier: billing visible",navText.includes("Full Sale")||navText.includes("Invoice"));
 t("Cashier: Admin Panel hidden",!navText.includes("Admin Panel"));
 t("Cashier: Accounting hidden",!navText.includes("Accounting"));
 t("Cashier: Users hidden",!navText.includes("Users & Roles"));
