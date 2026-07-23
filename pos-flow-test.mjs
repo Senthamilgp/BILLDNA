@@ -20,6 +20,9 @@ const wait=()=>act(async()=>{await new Promise(r=>setTimeout(r,50));});
 await act(async()=>{root.render(React.createElement(App));});
 await wait();
 
+// LANDING PAGE — click through to Login
+await act(async()=>{click(btnByText("Login →"));}); await wait();
+
 // LOGIN (offline mode)
 await act(async()=>{click(btnByText("Offline"));}); await wait();
 type($$("input")[1],"1234");

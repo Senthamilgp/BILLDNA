@@ -62,6 +62,7 @@ function onAuth(cb){
   return { data:{ subscription:{ unsubscribe:()=>{try{sub.unsubscribe&&sub.unsubscribe();}catch{}} } } };
 }
 async function captureLead(mobile,email){ try{ const s=await getSupa(); await s.from("leads").insert({mobile:mobile||null,email:email||null}); return true;}catch{return false;} }
+async function signInWithGoogle(){ const s=await getSupa(); return s.auth.signInWithOAuth({provider:"google",options:{redirectTo:typeof window!=="undefined"?window.location.origin:undefined}}); }
 // ---- offline-first sync ----
 const _LKEY="billdna_erp_v2";
 async function _readLocal(){ try{ const r=await window.storage.get(_LKEY); return r?JSON.parse(r.value):null; }catch{return null;} }
@@ -125,6 +126,7 @@ export default function BillDNA(){
   const [profileOpen,setProfileOpen]=useState(false);
   const [cloudUser,setCloudUser]=useState(null);
   const [syncMsg,setSyncMsg]=useState("");
+  const [entered,setEntered]=useState(false);
   const toastTimer=useRef(null);
   useEffect(()=>{const on=()=>setNarrow(window.innerWidth<720);window.addEventListener("resize",on);return()=>window.removeEventListener("resize",on);},[]);
 
@@ -168,7 +170,9 @@ export default function BillDNA(){
   const flash=m=>{setToast(m);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(null),2200);};
 
   if(!db) return <div style={{background:T.bg,minHeight:"100vh",color:T.dim,display:"grid",placeItems:"center",fontFamily:"system-ui"}}>Loading BillDNA…</div>;
-  if(!session) return <Login db={db} onLogin={u=>{const d=structuredClone(db);log(d,`${u.name} logged in`);save(d);setSession(u);}}/>;
+  if(!session) return entered
+    ? <Login db={db} onLogin={u=>{const d=structuredClone(db);log(d,`${u.name} logged in`);save(d);setSession(u);}}/>
+    : <Landing onEnter={()=>setEntered(true)}/>;
 
   const company=db.companies.find(c=>c.id===db.activeCompanyId);
   const branch=company?.branches.find(b=>b.id===db.activeBranchId);
@@ -285,6 +289,56 @@ export default function BillDNA(){
 
 const totalStock=p=>Object.values(p.stock||{}).reduce((a,b)=>a+b,0);
 
+/* ---------- Landing (website page before login) ---------- */
+function Landing({onEnter}){
+  const [mobile,setMobile]=useState("");const [email,setEmail]=useState("");const [sent,setSent]=useState(false);const [busy,setBusy]=useState(false);
+  const submitLead=async()=>{
+    if(!mobile.trim()&&!email.trim())return;
+    setBusy(true);await captureLead(mobile.trim(),email.trim());setBusy(false);setSent(true);
+  };
+  const FEATURES=[
+    ["🧾","Full Sale Billing","GST invoice, Bill of Supply, Cash Bill — Regular/Composite/No-Tax schemes"],
+    ["📊","Live Dashboard","Sales trend, top products, inflow/outflow — at a glance"],
+    ["📲","WhatsApp Share","One-tap send bills, receipts, reminders — no linked-device risk"],
+    ["☁","Cloud Sync","Login once, same data on PC + mobile, always backed up"],
+    ["📈","GST Reports","GSTR-1, 3B, HSN summary, CMP-08 — auto-generated"],
+    ["⬇","PDF & Excel","Download proper tax invoices and reports instantly"],
+  ];
+  return(<div style={{background:"#FFFFFF",minHeight:"100vh",fontFamily:"system-ui",color:"#000"}}>
+    <div style={{maxWidth:960,margin:"0 auto",padding:"0 20px"}}>
+      <div style={{display:"flex",alignItems:"center",padding:"20px 0"}}>
+        <div style={{fontWeight:800,fontSize:22}}>Bill<span style={{color:"#000"}}>DNA</span></div>
+        <button onClick={onEnter} style={{marginLeft:"auto",background:"#000",color:"#fff",border:"none",borderRadius:8,padding:"9px 18px",fontWeight:700,cursor:"pointer",fontSize:13.5}}>Login →</button>
+      </div>
+      <div style={{padding:"48px 0 32px",textAlign:"center"}}>
+        <div style={{fontSize:32,fontWeight:800,lineHeight:1.25}}>Billing made simple<br/>for Indian small business</div>
+        <div style={{color:"#6B6B6B",fontSize:15,marginTop:12,maxWidth:520,marginLeft:"auto",marginRight:"auto"}}>GST invoicing, inventory, reports and WhatsApp sharing — one clean app, works on PC and mobile.</div>
+        <button onClick={onEnter} style={{marginTop:20,background:"#000",color:"#fff",border:"none",borderRadius:10,padding:"13px 28px",fontWeight:800,cursor:"pointer",fontSize:15}}>Get Started</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))",gap:16,padding:"12px 0 40px"}}>
+        {FEATURES.map(([ic,t,d])=>(
+          <div key={t} style={{border:"1px solid #D6D6D6",borderRadius:12,padding:18}}>
+            <div style={{fontSize:26}}>{ic}</div>
+            <div style={{fontWeight:700,marginTop:8,fontSize:14.5}}>{t}</div>
+            <div style={{color:"#6B6B6B",fontSize:12.5,marginTop:4,lineHeight:1.4}}>{d}</div>
+          </div>))}
+      </div>
+      <div style={{border:"1px solid #D6D6D6",borderRadius:14,padding:24,marginBottom:48,textAlign:"center"}}>
+        {!sent?<>
+          <div style={{fontWeight:800,fontSize:16,marginBottom:4}}>Get notified about new features</div>
+          <div style={{color:"#6B6B6B",fontSize:12.5,marginBottom:14}}>Share your mobile or email — no spam, just BillDNA updates.</div>
+          <div style={{display:"flex",gap:8,maxWidth:420,margin:"0 auto",flexWrap:"wrap"}}>
+            <input style={{flex:1,minWidth:140,background:"#F4F4F4",border:"1px solid #D6D6D6",borderRadius:8,padding:"9px 10px",fontSize:13}} placeholder="Mobile number" value={mobile} onChange={e=>setMobile(e.target.value)}/>
+            <input style={{flex:1,minWidth:140,background:"#F4F4F4",border:"1px solid #D6D6D6",borderRadius:8,padding:"9px 10px",fontSize:13}} placeholder="Email (optional)" value={email} onChange={e=>setEmail(e.target.value)}/>
+            <button onClick={submitLead} disabled={busy} style={{background:"#000",color:"#fff",border:"none",borderRadius:8,padding:"9px 16px",fontWeight:700,cursor:"pointer",fontSize:13}}>{busy?"...":"Notify me"}</button>
+          </div>
+        </>:<div style={{fontWeight:700,color:"#000"}}>✓ Thanks! We'll keep you posted.</div>}
+      </div>
+      <div style={{textAlign:"center",color:"#6B6B6B",fontSize:11.5,paddingBottom:24}}>© BillDNA — SME ERP</div>
+    </div>
+  </div>);
+}
+
 /* ---------- Login (cloud auth + offline PIN) ---------- */
 function Login({db,onLogin}){
   const [mode,setMode]=useState("cloud"); // cloud | offline
@@ -307,6 +361,13 @@ function Login({db,onLogin}){
     setBusy(false);
   };
 
+  const googleGo=async()=>{
+    setErr("");setBusy(true);
+    try{ const {error}=await signInWithGoogle(); if(error)setErr(error.message); }
+    catch(e){ setErr(e.message||"Google sign-in unavailable"); }
+    setBusy(false);
+  };
+
   return(<div style={{background:T.bg,minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"system-ui"}}>
     <div style={{background:T.panel,border:`1px solid ${T.line}`,borderRadius:14,padding:28,width:340}}>
       <div style={{fontWeight:800,fontSize:26,color:T.text,marginBottom:4}}>Bill<span style={{color:T.acc}}>DNA</span></div>
@@ -316,6 +377,11 @@ function Login({db,onLogin}){
         <button onClick={()=>{setMode("offline");setErr("");}} style={{...btn(mode==="offline"?T.acc:T.panel2),color:mode==="offline"?"#fff":T.text,fontWeight:700,flex:1,fontSize:12}}>📴 Offline</button>
       </div>
       {mode==="cloud"?<>
+        <button onClick={googleGo} disabled={busy} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,width:"100%",background:"#fff",border:`1px solid ${T.line}`,borderRadius:8,padding:10,marginBottom:10,fontWeight:700,fontSize:13,cursor:"pointer",color:T.text}}>
+          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.6 29.4 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.5 3 24 3c-7.6 0-14.1 4.3-17.7 11.7z"/><path fill="#4CAF50" d="M24 45c5.3 0 10.1-1.8 13.9-4.9l-6.4-5.4C29.4 36.5 26.8 37.5 24 37.5c-5.3 0-9.9-3.4-11.5-8.1l-6.6 5.1C9.8 40.6 16.3 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4 5.4l6.4 5.4C40.9 36.5 44 30.9 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
+          Continue with Google
+        </button>
+        <div style={{textAlign:"center",color:T.dim,fontSize:10.5,margin:"2px 0 10px"}}>— or use email —</div>
         <div style={{display:"flex",gap:6,marginBottom:12}}>
           {[["in","Sign in"],["up","Sign up"]].map(([k,l])=>(
             <button key={k} onClick={()=>{setTab(k);setErr("");setMsg("");}} style={{...btn(tab===k?T.panel2:"transparent"),color:T.text,fontWeight:tab===k?700:500,flex:1,fontSize:12,border:`1px solid ${tab===k?T.text:T.line}`}}>{l}</button>))}

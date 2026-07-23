@@ -28,6 +28,7 @@ const wait=(ms=30)=>act(async()=>{await new Promise(r=>setTimeout(r,ms));});
 const t0=Date.now();
 createRoot(document.getElementById("root")).render(React.createElement(App));
 await wait(100);
+await act(async()=>click(btn("Login →")));await wait(20);
 await act(async()=>click(btn("Offline")));await wait(20);
 setVal($$("input")[1],"1234");
 const t1=Date.now();

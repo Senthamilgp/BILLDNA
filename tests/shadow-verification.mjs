@@ -48,6 +48,7 @@ const shadowReturn=idx=>{S.invoices[idx].items.forEach(i=>S.stock[i.n]+=i.q);};
 
 await wait(150);
 section("PHASE 1-4: EVENT CAPTURE + SHADOW STATE (guided flow)");
+await act(async()=>click(btn("Login →")));await wait();
 await act(async()=>click(btn("Offline")));await wait();
 setVal($$("input")[1],"0000");await act(async()=>click(btn("Sign in")));await wait();
 t("wrong PIN rejected",body().includes("incorrect"));
@@ -221,6 +222,7 @@ await act(async()=>{root.unmount();});
 root=createRoot(document.getElementById("root"));
 await act(async()=>{root.render(React.createElement(App));});
 await wait(150);
+await act(async()=>click(btn("Login →")));await wait();
 await act(async()=>click(btn("Offline")));await wait();
 setVal($$("input")[1],"1234");await act(async()=>click(btn("Sign in")));await wait();
 t("restart: data persisted (company shown)",body().includes("Sree Dynamics"));
