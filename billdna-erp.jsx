@@ -2431,102 +2431,156 @@ function MoreGrid({nav,setView,showAll,toggleAll}){
 }
 /* ---------- Excel export helper ---------- */
 // ---- Invoice PDF (proper GST tax invoice / Bill of Supply) ----
+function numToWords(n){
+  n=Math.round(n);
+  if(n===0)return "Zero";
+  const ones=["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+  const tens=["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+  const two=x=>x<20?ones[x]:tens[Math.floor(x/10)]+(x%10?" "+ones[x%10]:"");
+  const three=x=>x>=100?ones[Math.floor(x/100)]+" Hundred"+(x%100?" "+two(x%100):""):two(x);
+  const parts=[];
+  const crore=Math.floor(n/1e7); n%=1e7;
+  const lakh=Math.floor(n/1e5); n%=1e5;
+  const thousand=Math.floor(n/1e3); n%=1e3;
+  if(crore)parts.push(three(crore)+" Crore");
+  if(lakh)parts.push(three(lakh)+" Lakh");
+  if(thousand)parts.push(three(thousand)+" Thousand");
+  if(n)parts.push(three(n));
+  return parts.join(" ")||"Zero";
+}
 async function invoicePDF(inv, company, customerName){
   const isComp = !!inv.comp || company?.scheme==="composite";
   const isNoTax = !!inv.noTax || company?.scheme==="notax";
   const simpleCols = isComp || isNoTax; // hide HSN/GST columns
   let JsPDFCtor; try{ JsPDFCtor=await getJsPDF(); }catch{ alert("PDF library load aagala — internet check pannunga."); return; }
   const doc = new JsPDFCtor({unit:"mm", format:"a4"});
-  const W = 210, M = 14; let y = 16;
+  const W = 210, H = 297, M = 14;
   const money = n => "Rs " + (Math.round((+n||0)*100)/100).toLocaleString("en-IN");
-  const line = (yy)=>{doc.setDrawColor(180);doc.line(M,yy,W-M,yy);};
+  const INK=20, GREY=[120,120,120], LINE=[210,210,210], LT=[246,246,246];
 
-  // Header — company
-  doc.setFont("helvetica","bold"); doc.setFontSize(17);
-  doc.text(company?.name || "BillDNA", M, y);
-  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90);
-  y += 6;
-  const hdr = [];
-  if(company?.address) hdr.push(company.address);
-  const cs = [company?.city, company?.state].filter(Boolean).join(", "); if(cs) hdr.push(cs);
-  if(company?.gstin) hdr.push("GSTIN: " + company.gstin);
-  const contact = [company?.phone && ("Ph: "+company.phone), company?.email].filter(Boolean).join("   ");
-  if(contact) hdr.push(contact);
-  hdr.forEach(l=>{ doc.text(l, M, y); y += 4.5; });
+  // ===== Header band =====
+  doc.setFillColor(INK,INK,INK); doc.rect(0,0,W,30,"F");
+  doc.setTextColor(255); doc.setFont("helvetica","bold"); doc.setFontSize(16);
+  doc.text(company?.name || "BillDNA", M, 13);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+  const addrLine=[company?.address, [company?.city,company?.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ");
+  if(addrLine) doc.text(addrLine, M, 19);
+  const contact=[company?.phone&&("Ph "+company.phone), company?.email].filter(Boolean).join("   ·   ");
+  if(contact) doc.text(contact, M, 24);
+  doc.setFontSize(13); doc.setFont("helvetica","bold");
+  doc.text(isComp?"BILL OF SUPPLY":isNoTax?"CASH BILL":"TAX INVOICE", W-M, 13, {align:"right"});
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+  if(company?.gstin) doc.text("GSTIN "+company.gstin, W-M, 19, {align:"right"});
+  doc.text("ORIGINAL FOR RECIPIENT", W-M, 24, {align:"right"});
   doc.setTextColor(0);
 
-  // Title band
-  y += 2; line(y); y += 7;
-  doc.setFont("helvetica","bold"); doc.setFontSize(13);
-  doc.text(isComp ? "BILL OF SUPPLY" : isNoTax ? "CASH BILL" : "TAX INVOICE", W/2, y, {align:"center"});
-  y += 7; line(y); y += 7;
+  let y = 42;
 
-  // Bill-to + meta
-  doc.setFontSize(9);
-  doc.setFont("helvetica","bold"); doc.text("Bill To:", M, y);
-  doc.setFont("helvetica","normal"); doc.text(customerName || "Walk-in", M+16, y);
-  doc.setFont("helvetica","bold"); doc.text("Invoice No:", W-M-52, y);
-  doc.setFont("helvetica","normal"); doc.text(String(inv.no||""), W-M-24, y);
-  y += 5;
-  doc.setFont("helvetica","bold"); doc.text("Date:", W-M-52, y);
-  doc.setFont("helvetica","normal"); doc.text(new Date(inv.ts).toLocaleDateString("en-IN"), W-M-24, y);
-  if(inv.igst){ doc.setFont("helvetica","bold"); doc.text("Supply:", M, y); doc.setFont("helvetica","normal"); doc.text("Inter-state (IGST)", M+16, y);}
-  y += 6;
+  // ===== Bill-to / Invoice meta two-column boxes =====
+  const boxTop=y, boxH=30, colW=(W-2*M-6)/2;
+  doc.setDrawColor(...LINE); doc.setLineWidth(0.3);
+  doc.rect(M, boxTop, colW, boxH); doc.rect(M+colW+6, boxTop, colW, boxH);
+  doc.setFillColor(...LT); doc.rect(M, boxTop, colW, 6, "F"); doc.rect(M+colW+6, boxTop, colW, 6, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(...GREY);
+  doc.text("BILL TO", M+3, boxTop+4.2); doc.text("INVOICE DETAILS", M+colW+9, boxTop+4.2);
+  doc.setTextColor(0); doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
+  doc.text(customerName||"Walk-in Customer", M+3, boxTop+12);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY);
+  if(inv.igst) doc.text("Supply: Inter-state (IGST)", M+3, boxTop+18);
+  doc.setTextColor(0);
+  const meta=[["Invoice No.",String(inv.no||"")],["Date",new Date(inv.ts).toLocaleDateString("en-IN")],["Payment",inv.payMode||"—"]];
+  let my=boxTop+12;
+  meta.forEach(([l,v])=>{ doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY);
+    doc.text(l, M+colW+9, my); doc.setFont("helvetica","bold"); doc.setTextColor(0);
+    doc.text(v, M+colW+colW-3, my, {align:"right"}); my+=6; });
+  y = boxTop+boxH+10;
 
-  // Table header
+  // ===== Item table =====
   const cols = simpleCols
-    ? [["#",M,8],["Item",M+10,74],["Qty",M+86,16],["Rate",M+104,26],["Amount",W-M-26,26]]
-    : [["#",M,8],["Item",M+10,58],["HSN",M+70,16],["Qty",M+88,12],["Rate",M+102,22],["GST%",M+126,16],["Amount",W-M-28,28]];
-  doc.setFillColor(238); doc.rect(M, y-4, W-2*M, 7, "F");
-  doc.setFont("helvetica","bold"); doc.setFontSize(8.5);
-  cols.forEach(([t,x,w])=>{ const rightAlign=["Amount","Rate","Qty","GST%"].includes(t); doc.text(t, rightAlign?x+w:x, y, rightAlign?{align:"right"}:undefined); });
-  y += 6; doc.setFont("helvetica","normal");
+    ? [["#",M,8],["ITEM",M+10,72],["QTY",M+82,18],["RATE",M+100,28],["AMOUNT",W-M-30,30]]
+    : [["#",M,8],["ITEM",M+10,54],["HSN",M+64,16],["QTY",M+80,14],["RATE",M+94,20],["GST%",M+114,14],["AMOUNT",W-M-28,28]];
+  doc.setFillColor(INK,INK,INK); doc.rect(M, y-4.5, W-2*M, 7, "F");
+  doc.setTextColor(255); doc.setFont("helvetica","bold"); doc.setFontSize(8);
+  cols.forEach(([t,x,w])=>{ const ra=["AMOUNT","RATE","QTY","GST%"].includes(t); doc.text(t, ra?x+w:x, y, ra?{align:"right"}:undefined); });
+  doc.setTextColor(0); y += 5.5;
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
 
-  // Rows
   (inv.items||[]).forEach((it,i)=>{
-    if(y > 250){ doc.addPage(); y = 20; }
+    if(y > 255){ doc.addPage(); y = 20; }
+    if(i%2===1){ doc.setFillColor(...LT); doc.rect(M, y-4, W-2*M, 6, "F"); }
     const amt = (+it.rate||0)*(+it.qty||0);
     if(simpleCols){
       doc.text(String(i+1), M, y);
-      doc.text(String(it.name||"").slice(0,42), M+10, y);
-      doc.text(String(it.qty)+" "+(it.unit||""), M+86+16, y, {align:"right"});
-      doc.text(money(it.rate), M+104+26, y, {align:"right"});
-      doc.text(money(amt), W-M, y, {align:"right"});
+      doc.text(String(it.name||"").slice(0,44), M+10, y);
+      doc.text(String(it.qty)+" "+(it.unit||""), M+82+18, y, {align:"right"});
+      doc.text(money(it.rate), M+100+28, y, {align:"right"});
+      doc.setFont("helvetica","bold"); doc.text(money(amt), W-M, y, {align:"right"}); doc.setFont("helvetica","normal");
     } else {
       doc.text(String(i+1), M, y);
-      doc.text(String(it.name||"").slice(0,34), M+10, y);
-      doc.text(String(it.hsn||"-"), M+70, y);
-      doc.text(String(it.qty), M+88+12, y, {align:"right"});
-      doc.text(money(it.rate), M+102+22, y, {align:"right"});
-      doc.text(String(it.gst||0)+"%", M+126+16, y, {align:"right"});
-      doc.text(money(amt), W-M, y, {align:"right"});
+      doc.text(String(it.name||"").slice(0,32), M+10, y);
+      doc.text(String(it.hsn||"-"), M+64, y);
+      doc.text(String(it.qty), M+80+14, y, {align:"right"});
+      doc.text(money(it.rate), M+94+20, y, {align:"right"});
+      doc.text(String(it.gst||0)+"%", M+114+14, y, {align:"right"});
+      doc.setFont("helvetica","bold"); doc.text(money(amt), W-M, y, {align:"right"}); doc.setFont("helvetica","normal");
     }
-    y += 5.5;
+    y += 6;
   });
+  doc.setDrawColor(...LINE); doc.line(M, y, W-M, y); y += 8;
 
-  y += 1; line(y); y += 6;
-  // Totals (right aligned block)
-  const tx = W-M-58, vx = W-M;
-  const trow=(label,val,bold)=>{ doc.setFont("helvetica", bold?"bold":"normal"); doc.setFontSize(bold?10:9);
-    doc.text(label, tx, y); doc.text(money(val), vx, y, {align:"right"}); y += bold?6.5:5; };
-  trow("Subtotal", inv.sub);
+  // ===== Totals box (right) + Amount in words (left) =====
+  const totBoxW=76, totBoxX=W-M-totBoxW, totTop=y;
+  const rows=[["Subtotal", inv.sub, false]];
   if(!isComp && !isNoTax && +inv.tax>0){
-    if(inv.igst) trow("IGST", inv.tax);
-    else { trow("CGST", inv.tax/2); trow("SGST", inv.tax/2); }
+    if(inv.igst) rows.push(["IGST", inv.tax, false]);
+    else { rows.push(["CGST", inv.tax/2, false]); rows.push(["SGST", inv.tax/2, false]); }
   }
-  trow("Total", inv.total, true);
-  if(+inv.paid < +inv.total){ trow("Paid", inv.paid); trow("Balance Due", inv.total - inv.paid, true); }
-  else trow("Paid", inv.total);
+  const balance = inv.total - inv.paid;
+  let ty=totTop+6;
+  doc.setDrawColor(...LINE); doc.rect(totBoxX, totTop, totBoxW, 8+rows.length*6+16);
+  rows.forEach(([l,v])=>{ doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...GREY);
+    doc.text(l, totBoxX+4, ty); doc.setTextColor(0); doc.text(money(v), totBoxX+totBoxW-4, ty, {align:"right"}); ty+=6; });
+  doc.setFillColor(INK,INK,INK); doc.rect(totBoxX, ty-4.5, totBoxW, 8, "F");
+  doc.setTextColor(255); doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
+  doc.text("TOTAL", totBoxX+4, ty+1); doc.text(money(inv.total), totBoxX+totBoxW-4, ty+1, {align:"right"});
+  doc.setTextColor(0); ty+=10;
+  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...GREY);
+  doc.text("Paid", totBoxX+4, ty); doc.setTextColor(0); doc.text(money(inv.paid), totBoxX+totBoxW-4, ty, {align:"right"}); ty+=6;
+  if(balance>0.5){ doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(232,115,12);
+    doc.text("BALANCE DUE", totBoxX+4, ty); doc.text(money(balance), totBoxX+totBoxW-4, ty, {align:"right"}); doc.setTextColor(0); }
+  else { doc.setFont("helvetica","bold"); doc.setTextColor(0); doc.text("PAID IN FULL", totBoxX+4, ty); doc.setTextColor(0); }
+
+  doc.setFont("helvetica","italic"); doc.setFontSize(8); doc.setTextColor(...GREY);
+  const wordsLines = doc.splitTextToSize("Rupees "+numToWords(inv.total)+" Only", W-2*M-totBoxW-10);
+  doc.text(wordsLines, M, totTop+6);
+  doc.setTextColor(0);
+  y = Math.max(ty+14, totTop+6+wordsLines.length*4+8);
 
   // Composite mandatory note
   if(isComp){
-    y += 4; doc.setFont("helvetica","italic"); doc.setFontSize(7.5); doc.setTextColor(120);
+    doc.setFont("helvetica","italic"); doc.setFontSize(7.5); doc.setTextColor(...GREY);
     doc.text("Composition taxable person, not eligible to collect tax on supplies.", M, y);
-    doc.setTextColor(0);
+    doc.setTextColor(0); y += 6;
   }
+
+  // ===== Bank details + signature =====
+  if(company?.bank||true){
+    const sigY = Math.max(y+6, H-52);
+    doc.setDrawColor(...LINE); doc.line(M, sigY, W-M, sigY);
+    doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(...GREY);
+    doc.text("TERMS & CONDITIONS", M, sigY+6);
+    doc.setFont("helvetica","normal"); doc.setTextColor(0); doc.setFontSize(8);
+    doc.text("Goods once sold are not returnable. Subject to Thanjavur jurisdiction.", M, sigY+11);
+    doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(0);
+    doc.text("For "+(company?.name||"BillDNA"), W-M, sigY+6, {align:"right"});
+    doc.setDrawColor(...GREY); doc.line(W-M-45, sigY+24, W-M, sigY+24);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...GREY);
+    doc.text("Authorized Signatory", W-M, sigY+28, {align:"right"});
+  }
+
   // Footer
-  y = 285; doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(120);
-  doc.text("Thank you for your business!   |   Generated by BillDNA", W/2, y, {align:"center"});
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(...GREY);
+  doc.text("Thank you for your business!", W/2, H-10, {align:"center"});
   doc.setTextColor(0);
 
   doc.save((inv.no||"invoice") + ".pdf");

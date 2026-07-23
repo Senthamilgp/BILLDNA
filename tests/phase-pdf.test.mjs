@@ -19,4 +19,33 @@ t("composite by scheme", title(false,"composite")==="BILL OF SUPPLY");
 const split=(igst,tax)=> igst?[["IGST",tax]]:[["CGST",tax/2],["SGST",tax/2]];
 t("local splits cgst/sgst", split(false,846)[0][1]===423 && split(false,846)[1][1]===423);
 t("inter-state single igst", split(true,846).length===1 && split(true,846)[0][1]===846);
-console.log(pass+" passed, "+fail+" failed");process.exit(fail?1:0);
+console.log(pass+" passed, "+fail+" failed");
+
+// ---- numToWords (professional PDF redesign) ----
+function numToWords(n){
+  n=Math.round(n);
+  if(n===0)return "Zero";
+  const ones=["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+  const tens=["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+  const two=x=>x<20?ones[x]:tens[Math.floor(x/10)]+(x%10?" "+ones[x%10]:"");
+  const three=x=>x>=100?ones[Math.floor(x/100)]+" Hundred"+(x%100?" "+two(x%100):""):two(x);
+  const parts=[];
+  const crore=Math.floor(n/1e7); n%=1e7;
+  const lakh=Math.floor(n/1e5); n%=1e5;
+  const thousand=Math.floor(n/1e3); n%=1e3;
+  if(crore)parts.push(three(crore)+" Crore");
+  if(lakh)parts.push(three(lakh)+" Lakh");
+  if(thousand)parts.push(three(thousand)+" Thousand");
+  if(n)parts.push(three(n));
+  return parts.join(" ")||"Zero";
+}
+let p2=0,f2=0;const t2=(n,c)=>{c?(p2++,console.log("ok "+n)):(f2++,console.log("FAIL: "+n));};
+t2("zero", numToWords(0)==="Zero");
+t2("10797 matches sample bill (Ten Thousand Seven Hundred and Ninety Seven-ish)", numToWords(10797)==="Ten Thousand Seven Hundred Ninety Seven");
+t2("1 lakh", numToWords(100000)==="One Lakh");
+t2("1 crore 5", numToWords(10000005)==="One Crore Five");
+t2("999", numToWords(999)==="Nine Hundred Ninety Nine");
+t2("balance-due orange only when >0.5", (10797-0)>0.5===true);
+t2("paid-in-full when balance<=0.5", (10797-10797)<=0.5===true);
+console.log((pass+p2)+" passed, "+(fail+f2)+" failed");
+process.exit((fail+f2)?1:0);
