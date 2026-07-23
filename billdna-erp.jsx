@@ -35,6 +35,24 @@ async function getJsPDF(){
   if(!_jspdfP) _jspdfP=loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
   await _jspdfP; return window.jspdf.jsPDF;
 }
+// ---- QR code (lazy) — for UPI "Scan to Pay" ----
+let _qrP=null;
+async function getQR(){
+  if(typeof window!=="undefined" && window.QRCode) return window.QRCode;
+  if(!_qrP) _qrP=loadScript("https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js");
+  await _qrP; return window.QRCode;
+}
+function upiLink(upiId, name, amount, note){
+  if(!upiId) return null;
+  const p=new URLSearchParams({pa:upiId, pn:name||"BillDNA", am:(Math.round((+amount||0)*100)/100).toFixed(2), cu:"INR"});
+  if(note) p.set("tn",note);
+  return "upi://pay?"+p.toString();
+}
+async function upiQRDataUrl(upiId, name, amount, note){
+  if(!upiId || !(+amount>0)) return null;
+  try{ const QR=await getQR(); return await QR.toDataURL(upiLink(upiId,name,amount,note), {margin:1,width:220}); }
+  catch{ return null; }
+}
 // ---- Supabase (lazy) ----
 const SUPABASE_URL="https://vakbwubhdsvefulguklb.supabase.co";
 const SUPABASE_KEY="sb_publishable_JG5-iUFv4FUtd8Cdr-uv3A_ElllF78i";
@@ -2565,8 +2583,38 @@ async function invoicePDF(inv, company, customerName){
     doc.setTextColor(0); y += 6;
   }
 
+  // ===== Bank details + UPI QR =====
+  const hasBank = !!(company?.bankName||company?.bankHolder||company?.bankAccount||company?.bankIfsc);
+  const hasUPI = !!(company?.upiId) && balance>0.5;
+  let qrData = null;
+  if(hasUPI){ try{ qrData = await upiQRDataUrl(company.upiId, company.name, balance, "Invoice "+(inv.no||"")); }catch{ qrData=null; } }
+  if(hasBank || qrData){
+    const boxTop=y, boxH = 8+ (hasBank?4:0)*5.5 + 6;
+    const leftW = qrData ? (W-2*M-56) : (W-2*M);
+    if(hasBank){
+      doc.setDrawColor(...LINE); doc.rect(M, boxTop, leftW, boxH);
+      doc.setFillColor(...LT); doc.rect(M, boxTop, leftW, 6, "F");
+      doc.setFont("helvetica","bold"); doc.setFontSize(7.5); doc.setTextColor(...GREY);
+      doc.text("BANK & PAYMENT DETAILS", M+3, boxTop+4.2);
+      doc.setTextColor(0);
+      let by=boxTop+11;
+      [["Bank",company.bankName],["A/C Holder",company.bankHolder],["A/C No.",company.bankAccount],["IFSC",company.bankIfsc]].filter(([,v])=>v).forEach(([l,v])=>{
+        doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...GREY);
+        doc.text(l+":", M+4, by); doc.setFont("helvetica","bold"); doc.setTextColor(0); doc.text(String(v), M+30, by); by+=5.5; });
+    }
+    if(qrData){
+      const qx = M+leftW+(hasBank?6:0), qs=34;
+      doc.setDrawColor(...LINE); doc.rect(qx, boxTop, W-M-qx, Math.max(boxH,qs+8));
+      doc.addImage(qrData, "PNG", qx+((W-M-qx)-qs)/2, boxTop+3, qs, qs);
+      doc.setFont("helvetica","bold"); doc.setFontSize(7); doc.setTextColor(...GREY);
+      doc.text("SCAN TO PAY", qx+(W-M-qx)/2, boxTop+qs+8, {align:"center"});
+      doc.setTextColor(0);
+    }
+    y = boxTop + Math.max(boxH, qrData?42:0) + 8;
+  }
+
   // ===== Bank details + signature =====
-  if(company?.bank||true){
+  if(true){
     const sigY = Math.max(y+6, H-52);
     doc.setDrawColor(...LINE); doc.line(M, sigY, W-M, sigY);
     doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(...GREY);
@@ -2595,6 +2643,14 @@ function BillPreviewModal({inv, company, customerName, onClose}){
   const simpleCols = isComp || isNoTax;
   const balance = inv.total - inv.paid;
   const [busy,setBusy]=useState(false);
+  const [qrData,setQrData]=useState(null);
+  const hasBank = !!(company?.bankName||company?.bankHolder||company?.bankAccount||company?.bankIfsc);
+  const hasUPI = !!(company?.upiId) && balance>0.5;
+  useEffect(()=>{ let live=true;
+    if(hasUPI) upiQRDataUrl(company.upiId, company.name, balance, "Invoice "+(inv.no||"")).then(d=>{if(live)setQrData(d);});
+    else setQrData(null);
+    return()=>{live=false;};
+  },[hasUPI, company?.upiId, balance, inv.no]);
   const doDownload=async()=>{setBusy(true);await invoicePDF(inv,company,customerName);setBusy(false);};
   const INK="#141414", GREY="#787878", LINE="#D2D2D2", LT="#F6F6F6", ORANGE="#E8730C";
   const cellR={textAlign:"right"};
@@ -2686,6 +2742,20 @@ function BillPreviewModal({inv, company, customerName, onClose}){
               </div>
             </div>
           </div>
+          {(hasBank||qrData)&&<div style={{display:"flex",gap:10,marginTop:16}}>
+            {hasBank&&<div style={{flex:1,border:`1px solid ${LINE}`}}>
+              <div style={{background:LT,padding:"5px 10px",fontSize:9.5,fontWeight:700,color:GREY,letterSpacing:.4}}>BANK & PAYMENT DETAILS</div>
+              <div style={{padding:"8px 10px"}}>
+                {[["Bank",company.bankName],["A/C Holder",company.bankHolder],["A/C No.",company.bankAccount],["IFSC",company.bankIfsc]].filter(([,v])=>v).map(([l,v])=>(
+                  <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"1.5px 0"}}><span style={{color:GREY}}>{l}</span><b>{v}</b></div>))}
+              </div>
+            </div>}
+            {qrData&&<div style={{width:130,border:`1px solid ${LINE}`,textAlign:"center",padding:"10px 8px"}}>
+              <img src={qrData} alt="UPI QR" style={{width:96,height:96}}/>
+              <div style={{fontSize:9,fontWeight:700,color:GREY,marginTop:4,letterSpacing:.3}}>SCAN TO PAY</div>
+              <div style={{fontSize:10.5,fontWeight:800,marginTop:1}}>{inr(balance)}</div>
+            </div>}
+          </div>}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:28,paddingTop:14,borderTop:`1px solid ${LINE}`}}>
             <div>
               <div style={{fontSize:9.5,fontWeight:700,color:GREY,letterSpacing:.4}}>TERMS & CONDITIONS</div>
@@ -2991,15 +3061,17 @@ function FullSale({db,save,log,notify,flash,branch,company}){
 function CompanyModal({db,save,log,notify,flash,onClose}){
   const cur=db.companies.find(c=>c.id===db.activeCompanyId);
   const [tab,setTab]=useState(cur?"view":"create");
-  const empty={name:"",gstin:"",email:"",phone:"",address:"",city:"",state:"",scheme:"regular",compRate:1};
-  const [f,setF]=useState(cur?{name:cur.name,gstin:cur.gstin||"",email:cur.email||"",phone:cur.phone||"",address:cur.address||"",city:cur.city||"",state:cur.state||"",scheme:cur.scheme||"regular",compRate:cur.compRate||1}:empty);
+  const empty={name:"",gstin:"",email:"",phone:"",address:"",city:"",state:"",scheme:"regular",compRate:1,bankHolder:"",bankAccount:"",bankIfsc:"",bankName:"",upiId:""};
+  const [f,setF]=useState(cur?{name:cur.name,gstin:cur.gstin||"",email:cur.email||"",phone:cur.phone||"",address:cur.address||"",city:cur.city||"",state:cur.state||"",scheme:cur.scheme||"regular",compRate:cur.compRate||1,bankHolder:cur.bankHolder||"",bankAccount:cur.bankAccount||"",bankIfsc:cur.bankIfsc||"",bankName:cur.bankName||"",upiId:cur.upiId||""}:empty);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
   const createCo=()=>{
     if(!f.name.trim())return flash("Company name required");
     const d=structuredClone(db);
     const c={id:uid(),name:f.name.trim(),gstin:f.gstin.trim().toUpperCase(),email:f.email.trim(),phone:f.phone.trim(),
-      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),scheme:f.scheme,compRate:+f.compRate||1,branches:[{id:uid(),name:"Main Branch",city:f.city.trim()}]};
+      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),scheme:f.scheme,compRate:+f.compRate||1,
+      bankHolder:f.bankHolder.trim(),bankAccount:f.bankAccount.trim(),bankIfsc:f.bankIfsc.trim().toUpperCase(),bankName:f.bankName.trim(),upiId:f.upiId.trim(),
+      branches:[{id:uid(),name:"Main Branch",city:f.city.trim()}]};
     d.companies.push(c);d.activeCompanyId=c.id;d.activeBranchId=c.branches[0].id;
     log(d,`Company created: ${c.name}`);notify(d,`Company "${c.name}" created`);
     save(d);flash("Company created");onClose();
@@ -3008,7 +3080,8 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
     if(!f.name.trim())return flash("Company name required");
     const d=structuredClone(db);const c=d.companies.find(x=>x.id===cur.id);
     Object.assign(c,{name:f.name.trim(),gstin:f.gstin.trim().toUpperCase(),email:f.email.trim(),phone:f.phone.trim(),
-      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),scheme:f.scheme,compRate:+f.compRate||1});
+      address:f.address.trim(),city:f.city.trim(),state:f.state.trim(),scheme:f.scheme,compRate:+f.compRate||1,
+      bankHolder:f.bankHolder.trim(),bankAccount:f.bankAccount.trim(),bankIfsc:f.bankIfsc.trim().toUpperCase(),bankName:f.bankName.trim(),upiId:f.upiId.trim()});
     log(d,`Company edited: ${c.name}`);save(d);flash("Saved");onClose();
   };
   const switchCo=(cId)=>{const d=structuredClone(db);const c=d.companies.find(x=>x.id===cId);
@@ -3043,6 +3116,7 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
           {row("GSTIN", cur.gstin)}{row("Email", cur.email)}{row("Mobile", cur.phone)}
           {row("Address", cur.address)}{row("City", cur.city)}{row("State", cur.state)}
           {row("Branches", cur.branches.map(b=>b.name).join(", "))}
+          {row("Bank", cur.bankName)}{row("A/C Holder", cur.bankHolder)}{row("A/C No.", cur.bankAccount)}{row("IFSC", cur.bankIfsc)}{row("UPI ID", cur.upiId)}
           {!cur.gstin&&!cur.email&&!cur.phone&&<div style={{fontSize:12,color:T.acc2,marginTop:8}}>Details empty — Edit tab-la fill pannunga.</div>}
         </Card>}
         {(tab==="create"||tab==="edit")&&<Card>
@@ -3072,6 +3146,14 @@ function CompanyModal({db,save,log,notify,flash,onClose}){
             {field("City","city","City")}
             {field("State","state","Tamil Nadu")}
           </div>
+          <div style={{fontSize:11,color:T.dim,margin:"10px 0 4px",fontWeight:700}}>Bank & Payment (for invoice PDF)</div>
+          {field("Bank name","bankName","State Bank of India")}
+          {field("Account holder name","bankHolder","Sree Enterprises")}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {field("Account number","bankAccount","1234567890")}
+            {field("IFSC code","bankIfsc","SBIN0001234")}
+          </div>
+          {field("UPI ID (enables Scan-to-Pay QR)","upiId","business@oksbi")}
           <button onClick={tab==="create"?createCo:saveEdit} style={{...btn(T.acc),color:"#fff",fontWeight:800,width:"100%",padding:11,marginTop:6}}>
             {tab==="create"?"Create company":"Save changes"}</button>
         </Card>}
