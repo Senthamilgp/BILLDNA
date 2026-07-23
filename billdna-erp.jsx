@@ -714,6 +714,7 @@ function POS({db,save,log,notify,flash,branch}){
 /* ---------- Invoices list + returns (P3) ---------- */
 function Invoices({db,save,log,flash}){
   const [filter,setFilter]=useState("All");
+  const [previewInv,setPreviewInv]=useState(null);
   const list=db.invoices.filter(i=>filter==="All"||i.type===filter);
   const receive=(id)=>{const d=structuredClone(db);const i=d.invoices.find(x=>x.id===id);
     i.paid=i.total;d.payments.unshift({id:uid(),ts:Date.now(),ref:i.no,amt:i.total-0,dir:"in"});
@@ -761,11 +762,12 @@ function Invoices({db,save,log,flash}){
         </div>
         <div style={{fontWeight:700,color:T.acc}}>{inr(i.total)}</div>
         {i.returned?badge("RETURNED",T.danger):i.paid>=i.total?badge("PAID",T.text):badge(`DUE ${inr(i.total-i.paid)}`,T.acc2)}
-        <button onClick={()=>invoicePDF(i,db.companies.find(c=>c.id===db.activeCompanyId),custName(i.customerId))} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>⬇ PDF</button>
+        <button onClick={()=>setPreviewInv(i)} style={{...btn(T.acc),color:"#fff",fontWeight:700}}>👁 Preview</button>
         {i.paid<i.total&&<button onClick={()=>receive(i.id)} style={btn(T.panel2)}>Mark paid</button>}
         {!i.returned&&i.type.includes("Invoice")&&<button onClick={()=>doReturn(i.id)} style={{...btn(T.panel2),color:T.danger}}>Return</button>}
       </div></Card>))}
     {list.length===0&&<div style={{color:T.dim,fontSize:13}}>No invoices yet.</div>}
+    {previewInv&&<BillPreviewModal inv={previewInv} company={db.companies.find(c=>c.id===db.activeCompanyId)} customerName={custName(previewInv.customerId)} onClose={()=>setPreviewInv(null)}/>}
   </div>);
 }
 
@@ -2586,6 +2588,121 @@ async function invoicePDF(inv, company, customerName){
   doc.save((inv.no||"invoice") + ".pdf");
 }
 
+/* ---------- Bill Preview Modal (matches PDF design) ---------- */
+function BillPreviewModal({inv, company, customerName, onClose}){
+  const isComp = !!inv.comp || company?.scheme==="composite";
+  const isNoTax = !!inv.noTax || company?.scheme==="notax";
+  const simpleCols = isComp || isNoTax;
+  const balance = inv.total - inv.paid;
+  const [busy,setBusy]=useState(false);
+  const doDownload=async()=>{setBusy(true);await invoicePDF(inv,company,customerName);setBusy(false);};
+  const INK="#141414", GREY="#787878", LINE="#D2D2D2", LT="#F6F6F6", ORANGE="#E8730C";
+  const cellR={textAlign:"right"};
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(20,20,20,.55)",zIndex:300,display:"flex",justifyContent:"center",alignItems:"flex-start",overflowY:"auto",padding:"24px 12px"}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:"#fff",width:720,maxWidth:"100%",borderRadius:2,boxShadow:"0 12px 40px rgba(0,0,0,.35)",fontFamily:"Helvetica, Arial, sans-serif",color:"#111"}}>
+      {/* toolbar */}
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:`1px solid ${LINE}`,background:"#fafafa",position:"sticky",top:0,borderRadius:"2px 2px 0 0"}}>
+        <div style={{fontWeight:800,fontSize:13}}>Bill Preview</div>
+        <button onClick={doDownload} disabled={busy} style={{marginLeft:"auto",background:INK,color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",fontWeight:700,fontSize:12.5,cursor:"pointer"}}>{busy?"...":"⬇ Download PDF"}</button>
+        <button onClick={onClose} style={{background:"#eee",border:"none",borderRadius:6,padding:"7px 12px",fontWeight:700,fontSize:12.5,cursor:"pointer"}}>✕</button>
+      </div>
+      {/* page */}
+      <div style={{padding:0}}>
+        <div style={{background:INK,color:"#fff",padding:"14px 20px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <div style={{fontWeight:800,fontSize:19}}>{company?.name||"BillDNA"}</div>
+              <div style={{fontSize:11,opacity:.85,marginTop:3}}>{[company?.address,[company?.city,company?.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ")}</div>
+              <div style={{fontSize:11,opacity:.85}}>{[company?.phone&&("Ph "+company.phone),company?.email].filter(Boolean).join("   ·   ")}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontWeight:800,fontSize:15}}>{isComp?"BILL OF SUPPLY":isNoTax?"CASH BILL":"TAX INVOICE"}</div>
+              {company?.gstin&&<div style={{fontSize:11,opacity:.85,marginTop:3}}>GSTIN {company.gstin}</div>}
+              <div style={{fontSize:10,opacity:.7,marginTop:2}}>ORIGINAL FOR RECIPIENT</div>
+            </div>
+          </div>
+        </div>
+        <div style={{padding:"18px 20px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            <div style={{border:`1px solid ${LINE}`}}>
+              <div style={{background:LT,padding:"5px 10px",fontSize:9.5,fontWeight:700,color:GREY,letterSpacing:.4}}>BILL TO</div>
+              <div style={{padding:"8px 10px"}}>
+                <div style={{fontWeight:800,fontSize:14}}>{customerName||"Walk-in Customer"}</div>
+                {inv.igst&&<div style={{fontSize:11,color:GREY,marginTop:3}}>Supply: Inter-state (IGST)</div>}
+              </div>
+            </div>
+            <div style={{border:`1px solid ${LINE}`}}>
+              <div style={{background:LT,padding:"5px 10px",fontSize:9.5,fontWeight:700,color:GREY,letterSpacing:.4}}>INVOICE DETAILS</div>
+              <div style={{padding:"8px 10px"}}>
+                {[["Invoice No.",String(inv.no||"")],["Date",new Date(inv.ts).toLocaleDateString("en-IN")],["Payment",inv.payMode||"—"]].map(([l,v])=>(
+                  <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,padding:"2px 0"}}><span style={{color:GREY}}>{l}</span><b>{v}</b></div>))}
+              </div>
+            </div>
+          </div>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+            <thead><tr style={{background:INK,color:"#fff"}}>
+              <th style={{padding:"6px 8px",textAlign:"left",fontSize:9.5}}>#</th>
+              <th style={{padding:"6px 8px",textAlign:"left",fontSize:9.5}}>ITEM</th>
+              {!simpleCols&&<th style={{padding:"6px 8px",textAlign:"left",fontSize:9.5}}>HSN</th>}
+              <th style={{padding:"6px 8px",...cellR,fontSize:9.5}}>QTY</th>
+              <th style={{padding:"6px 8px",...cellR,fontSize:9.5}}>RATE</th>
+              {!simpleCols&&<th style={{padding:"6px 8px",...cellR,fontSize:9.5}}>GST%</th>}
+              <th style={{padding:"6px 8px",...cellR,fontSize:9.5}}>AMOUNT</th>
+            </tr></thead>
+            <tbody>
+              {(inv.items||[]).map((it,i)=>{const amt=(+it.rate||0)*(+it.qty||0);
+                return(<tr key={i} style={{background:i%2===1?LT:"transparent",borderBottom:`1px solid ${LINE}`}}>
+                  <td style={{padding:"6px 8px"}}>{i+1}</td>
+                  <td style={{padding:"6px 8px"}}>{it.name}</td>
+                  {!simpleCols&&<td style={{padding:"6px 8px"}}>{it.hsn||"-"}</td>}
+                  <td style={{padding:"6px 8px",...cellR}}>{it.qty} {it.unit||""}</td>
+                  <td style={{padding:"6px 8px",...cellR}}>{inr(it.rate)}</td>
+                  {!simpleCols&&<td style={{padding:"6px 8px",...cellR}}>{it.gst||0}%</td>}
+                  <td style={{padding:"6px 8px",...cellR,fontWeight:700}}>{inr(amt)}</td>
+                </tr>);})}
+            </tbody>
+          </table>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 240px",gap:16,marginTop:16,alignItems:"start"}}>
+            <div>
+              <div style={{fontSize:10.5,fontStyle:"italic",color:GREY,lineHeight:1.5}}>Rupees {numToWords(inv.total)} Only</div>
+              {isComp&&<div style={{fontSize:9.5,fontStyle:"italic",color:GREY,marginTop:8}}>Composition taxable person, not eligible to collect tax on supplies.</div>}
+            </div>
+            <div style={{border:`1px solid ${LINE}`}}>
+              <div style={{padding:"6px 10px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:GREY,padding:"2px 0"}}><span>Subtotal</span><b style={{color:"#111"}}>{inr(inv.sub)}</b></div>
+                {!isComp&&!isNoTax&&+inv.tax>0&&(inv.igst
+                  ?<div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:GREY,padding:"2px 0"}}><span>IGST</span><b style={{color:"#111"}}>{inr(inv.tax)}</b></div>
+                  :<>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:GREY,padding:"2px 0"}}><span>CGST</span><b style={{color:"#111"}}>{inr(inv.tax/2)}</b></div>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:GREY,padding:"2px 0"}}><span>SGST</span><b style={{color:"#111"}}>{inr(inv.tax/2)}</b></div>
+                  </>)}
+              </div>
+              <div style={{background:INK,color:"#fff",padding:"7px 10px",display:"flex",justifyContent:"space-between",fontWeight:800,fontSize:13}}><span>TOTAL</span><span>{inr(inv.total)}</span></div>
+              <div style={{padding:"6px 10px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:GREY,padding:"2px 0"}}><span>Paid</span><b style={{color:"#111"}}>{inr(inv.paid)}</b></div>
+                {balance>0.5
+                  ?<div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:800,color:ORANGE,padding:"3px 0"}}><span>BALANCE DUE</span><span>{inr(balance)}</span></div>
+                  :<div style={{fontWeight:800,fontSize:12,padding:"3px 0"}}>PAID IN FULL</div>}
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:28,paddingTop:14,borderTop:`1px solid ${LINE}`}}>
+            <div>
+              <div style={{fontSize:9.5,fontWeight:700,color:GREY,letterSpacing:.4}}>TERMS & CONDITIONS</div>
+              <div style={{fontSize:10.5,marginTop:4,color:"#333"}}>Goods once sold are not returnable. Subject to Thanjavur jurisdiction.</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontWeight:800,fontSize:11.5}}>For {company?.name||"BillDNA"}</div>
+              <div style={{width:150,borderTop:`1px solid ${GREY}`,marginTop:26,paddingTop:4,fontSize:10,color:GREY}}>Authorized Signatory</div>
+            </div>
+          </div>
+          <div style={{textAlign:"center",fontSize:10,color:GREY,marginTop:20}}>Thank you for your business!</div>
+        </div>
+      </div>
+    </div>
+  </div>);
+}
+
 const xls=(rows,name)=>{const ws=XLSX.utils.aoa_to_sheet(rows);
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Sheet1");
   XLSX.writeFile(wb,name);};
@@ -2684,6 +2801,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
   const [newBank,setNewBank]=useState("");
   const savingRef=useRef(false);
   const [lastInv,setLastInv]=useState(null);
+  const [previewOpen,setPreviewOpen]=useState(false);
 
   const banks=db.settings?.banks||[];
   const custBal=id=>db.invoices.filter(i=>i.customerId===id&&!i.returned).reduce((a,i)=>a+Math.max(0,i.total-i.paid),0);
@@ -2753,6 +2871,7 @@ function FullSale({db,save,log,notify,flash,branch,company}){
     log(d,`Full Sale ${no} — ${inr(total)} (${payMode}${supply==="inter"?", IGST":""})`);
     save(d);flash(`${no} saved`);
     setLastInv({inv,cust:d.customers.find(c=>c.id===custId)?.name||"Walk-in"});
+    setPreviewOpen(true);
     setRows([blankRow(),blankRow()]);setReceived("");
     if(!andNew){setCustId("");setMode("Cash");}
   };
@@ -2861,7 +2980,8 @@ function FullSale({db,save,log,notify,flash,branch,company}){
           <button onClick={()=>doSave(false)} style={{...btn(T.acc),color:"#fff",fontWeight:800,flex:1,padding:11}}>💾 Save</button>
           <button onClick={()=>doSave(true)} style={{...btn(T.text),color:"#fff",fontWeight:800,flex:1,padding:11}}>Save & New</button>
         </div>
-        {lastInv&&<button onClick={()=>invoicePDF(lastInv.inv,company,lastInv.cust)} style={{...btn(T.panel2),width:"100%",marginTop:8,fontWeight:700,color:T.acc}}>⬇ Download last bill PDF ({lastInv.inv.no})</button>}
+        {lastInv&&<button onClick={()=>setPreviewOpen(true)} style={{...btn(T.panel2),width:"100%",marginTop:8,fontWeight:700,color:T.acc}}>👁 Preview last bill ({lastInv.inv.no})</button>}
+        {previewOpen&&lastInv&&<BillPreviewModal inv={lastInv.inv} company={company} customerName={lastInv.cust} onClose={()=>setPreviewOpen(false)}/>}
       </Card>
     </div>
   </div>);
